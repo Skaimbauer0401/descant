@@ -476,6 +476,13 @@ public final class PathFinder {
 		if (ascend) {
 			cost += BotSettings.JUMP_COST;
 		}
+
+		// Bridging is preferred to jumping wherever both are possible, so a jump is surcharged past
+		// what bridging the same span would cost. Only when the bot could actually build, though: with
+		// nothing to place, a jump is the cheap option again rather than a reason to walk miles around.
+		if (allowPlace) {
+			cost += (distance - 1) * BotSettings.PARKOUR_BRIDGE_SURCHARGE;
+		}
 		add(parent, landing, cost, NO_BREAK, null, distance);
 	}
 

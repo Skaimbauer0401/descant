@@ -89,6 +89,24 @@ public final class BotSettings {
 	public static final int MAX_PARKOUR_DISTANCE = 4;
 
 	/**
+	 * Surcharge per gap cell on a jump, when the bot could bridge that gap instead.
+	 *
+	 * <p>Bridging is the preferred way across a gap: it is slower and spends blocks, but it leaves
+	 * solid ground behind and cannot drop the bot into a ravine. A jump has no such failure floor —
+	 * missing one costs the fall.</p>
+	 *
+	 * <p>The number is derived rather than guessed. Bridging one cell costs {@link #PLACE_COST} plus a
+	 * step across it ({@link #WALK_COST}), about 24.6 ticks; a jump crosses that same cell for roughly
+	 * {@code WALK_COST} of its own price, so the gap between the two options is about 20 ticks per
+	 * cell. Anything above that tips the choice to bridging; this leaves a clear margin on top.</p>
+	 *
+	 * <p>Applied only when placing is allowed. When it is not — {@code /mcbot walk}, or having run out
+	 * of blocks — there is nothing to prefer, so jumps go back to their honest price rather than
+	 * becoming a reason to detour for twenty blocks.</p>
+	 */
+	public static final double PARKOUR_BRIDGE_SURCHARGE = 22.0;
+
+	/**
 	 * Furthest jump that may also gain a block of height.
 	 *
 	 * <p>An ascending jump spends part of its arc climbing, so it reaches less far. Baritone allows it
