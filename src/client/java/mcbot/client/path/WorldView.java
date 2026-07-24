@@ -11,8 +11,11 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
@@ -80,7 +83,35 @@ public final class WorldView {
 		if (isHazard(pos, state)) {
 			return false;
 		}
+		if (isOpenable(state)) {
+			return true; // shut right now, but the bot can open it — see isOpenable
+		}
 		return !state.blocksMotion();
+	}
+
+	/**
+	 * A door or fence gate the bot can open by clicking it.
+	 *
+	 * <p>These count as <em>passable</em> to the planner whether they are open or shut, which is
+	 * Baritone's rule and at first glance a lie about the world. It is the right lie: a shut door is
+	 * not an obstacle, it is a one-click delay, and treating it as a wall makes the bot tunnel through
+	 * someone's house rather than use the doorway. Baritone charges nothing extra for it either.</p>
+	 *
+	 * <p>Iron doors and iron trapdoors are excluded — those need a redstone signal, so for a bot with
+	 * no lever-pulling behaviour they really are walls.</p>
+	 */
+	public static boolean isOpenable(BlockState state) {
+		Block block = state.getBlock();
+		if (block == Blocks.IRON_DOOR || block == Blocks.IRON_TRAPDOOR) {
+			return false;
+		}
+		return block instanceof DoorBlock || block instanceof FenceGateBlock;
+	}
+
+	/** Whether this block is an openable door/gate that is currently shut, so it needs a click. */
+	public boolean isShutDoor(BlockPos pos) {
+		BlockState state = state(pos);
+		return isOpenable(state) && !state.getValue(BlockStateProperties.OPEN);
 	}
 
 	/**
@@ -94,6 +125,11 @@ public final class WorldView {
 	public boolean isStandable(BlockPos pos) {
 		BlockState state = state(pos);
 		if (isHazard(pos, state) || !state.blocksMotion()) {
+			return false;
+		}
+		if (isOpenable(state)) {
+			// A shut door is a full-height, paper-thin slab of collision. Its shape reaches the top of
+			// the block, so without this it reads as perfectly good ground to stand on.
 			return false;
 		}
 		VoxelShape shape = state.getCollisionShape(level, pos);

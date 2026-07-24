@@ -9,6 +9,7 @@ import mcbot.client.BotSettings;
 import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
+import mcbot.client.action.DoorOpener;
 import mcbot.client.action.WaterBucketClutch;
 import mcbot.client.inventory.InventoryManager;
 import mcbot.client.inventory.ItemScanner;
@@ -81,6 +82,7 @@ public final class BotController {
 	private final BotInput input = new BotInput();
 	private final BlockBreaker breaker = new BlockBreaker();
 	private final BlockPlacer placer = new BlockPlacer();
+	private final DoorOpener doorOpener = new DoorOpener();
 	private final WaterBucketClutch clutch = new WaterBucketClutch();
 	private final Consumer<Component> messageSink;
 
@@ -531,6 +533,7 @@ public final class BotController {
 		}
 
 		input.clear();
+		doorOpener.tick();
 		trackProgress(minecraft, player);
 		trackHuntedEntity(minecraft);
 		if (!isActive()) {
@@ -779,6 +782,10 @@ public final class BotController {
 			return;
 		}
 
+		// A shut door on the way. The planner counted it as passable on the promise that we would open
+		// it, so this is where that promise is kept — one click in passing, without stopping the walk.
+		openDoorAhead(minecraft, player, next);
+
 		// Walk to the next node, and only the next node. There is deliberately no string-pulling here
 		// any more: A* already emits diagonal moves, so the route it returns is smooth in the only
 		// sense that matters, and smoothing on top of it aimed the bot at a waypoint several blocks
@@ -978,6 +985,19 @@ public final class BotController {
 		// 1.0 is the far face.
 		double progress = sign > 0 ? predicted - base : (base + 1.0) - predicted;
 		return progress >= 1.0;
+	}
+
+	/**
+	 * Opens a shut door or gate blocking this step, at feet or head height.
+	 *
+	 * <p>Both levels are checked because a door occupies two blocks and the route may aim at either
+	 * half depending on where the floor is.</p>
+	 */
+	private void openDoorAhead(Minecraft minecraft, LocalPlayer player, Path.Step step) {
+		if (doorOpener.open(minecraft, player, step.pos())) {
+			return;
+		}
+		doorOpener.open(minecraft, player, step.pos().above());
 	}
 
 	/** Whether this step goes straight up or down a ladder or vine. */
@@ -1593,6 +1613,7 @@ public final class BotController {
 			breaker.cancel(minecraft);
 		}
 		placer.cancel();
+		doorOpener.reset();
 	}
 
 	/**
