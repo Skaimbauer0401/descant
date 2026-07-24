@@ -9,7 +9,9 @@ import mcbot.client.BotSettings;
 import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
+import mcbot.client.action.CombatAction;
 import mcbot.client.action.DoorOpener;
+import mcbot.client.action.EatAction;
 import mcbot.client.action.WaterBucketClutch;
 import mcbot.client.inventory.InventoryManager;
 import mcbot.client.inventory.ItemScanner;
@@ -29,6 +31,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.ItemStack;
@@ -63,6 +66,9 @@ public final class BotController {
 		BREAKING,
 		PLACING,
 		CLUTCHING,
+		EATING,
+		/** Defending against a hostile that got too close. */
+		FIGHTING,
 		/** Breaking the block we came to mine, having arrived beside it. */
 		MINING,
 		/** Walking over the drops left by a broken block. */
@@ -84,6 +90,8 @@ public final class BotController {
 	private final BlockBreaker breaker = new BlockBreaker();
 	private final BlockPlacer placer = new BlockPlacer();
 	private final DoorOpener doorOpener = new DoorOpener();
+	private final EatAction eater = new EatAction();
+	private final CombatAction combat = new CombatAction();
 	private final WaterBucketClutch clutch = new WaterBucketClutch();
 	private final Consumer<Component> messageSink;
 
@@ -414,7 +422,9 @@ public final class BotController {
 				|| status == Status.PLACING
 				|| status == Status.MINING
 				|| status == Status.COLLECTING
-				|| status == Status.CLUTCHING;
+				|| status == Status.CLUTCHING
+				|| status == Status.EATING
+				|| status == Status.FIGHTING;
 	}
 
 	public BotInput input() {
@@ -492,6 +502,8 @@ public final class BotController {
 			case BREAKING, MINING -> "mining";
 			case PLACING -> "building";
 			case COLLECTING -> "collecting";
+			case EATING -> "eating";
+			case FIGHTING -> "fighting";
 			case CLUTCHING -> "clutching";
 			case SUCCEEDED -> "done";
 			case FAILED -> "failed";
@@ -588,12 +600,16 @@ public final class BotController {
 	}
 
 	/**
-	 * Handles the two things that will kill the bot mid-route if ignored: a fatal fall and drowning.
+	 * Handles the things that will kill the bot mid-route if ignored: a fatal fall, drowning, a mob
+	 * beating on it, starvation.
 	 *
-	 * <p>Both are Baritone's scope — a water-bucket landing is {@code allowWaterBucketFall}, and
-	 * neither is a "behaviour" so much as a movement the route has already committed to. Fighting and
-	 * eating used to live here too and no longer do: Baritone has no combat or hunger handling at all,
-	 * and this is meant to be that same base.</p>
+	 * <p>The first two are Baritone's scope; fighting back and eating are a deliberate superset of it.
+	 * A navigation bot that arrives dead has not arrived, and unlike Baritone this one is expected to
+	 * survive a walk across hostile terrain unattended.</p>
+	 *
+	 * <p>Strictly <em>defensive</em>: it fights what comes within arm's reach and no further. There is
+	 * no chase, no seeking out of targets, and no bypassing of the pathfinder to run at something —
+	 * that mode existed once and is deliberately not coming back.</p>
 	 *
 	 * @return {@code true} when survival took over this tick and the route should not be driven
 	 */
@@ -604,6 +620,10 @@ public final class BotController {
 			return true;
 		}
 		if (clutchEnabled && WaterBucketClutch.isNeeded(minecraft, player)) {
+			// Drop any held-use interaction before the clutch equips the bucket — a raised shield or an
+			// eat still holding the use key would fire the bucket the instant it reaches the main hand,
+			// dumping the water mid-air and wasting the clutch.
+			releaseInteractions(minecraft, player);
 			clutch.begin();
 			status = Status.CLUTCHING;
 			tickClutch(minecraft, player);
@@ -612,10 +632,84 @@ public final class BotController {
 
 		// 2. Running out of air.
 		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL) {
+			releaseInteractions(minecraft, player); // same reason: nothing held while surfacing
 			swimForAir(minecraft, player);
 			return true;
 		}
+
+		// 3. Something hostile within arm's reach. A threat owns the whole tick: fighting and stopping
+		// to eat are mutually exclusive, and arbitrating them every tick off a health threshold that
+		// jitters as hits land is exactly what made the bot dither — shield half-raised from an
+		// abandoned eat while it stood there deciding. So a threat first cancels any eat in progress
+		// (releasing the use key, which is what was raising the shield), then hands the tick to combat,
+		// which blocks and strikes as one coherent behaviour.
+		//
+		// Deliberately not gated on low health. Standing still eating next to a mob that is hitting you
+		// is strictly worse than fighting it off: you take the hits either way, and only one of the two
+		// removes the threat.
+		LivingEntity threat = CombatAction.findThreat(minecraft, player);
+		if (threat != null) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			status = Status.FIGHTING;
+			if (combat.tick(minecraft, player, input, threat) != ActionState.WORKING) {
+				combat.cancel(minecraft, player);
+				status = Status.FOLLOWING;
+			}
+			return true;
+		}
+		if (status == Status.FIGHTING) {
+			combat.cancel(minecraft, player); // threat gone or fled; drop the shield and carry on
+			status = Status.FOLLOWING;
+		}
+
+		// 4. Hunger and healing. Only reached when nothing hostile is near, so eating never overlaps a
+		// fight. Only worth stopping for between path actions, never mid-mine.
+		if (status == Status.EATING) {
+			tickEating(minecraft, player);
+			return true;
+		}
+		if ((status == Status.FOLLOWING || status == Status.PLANNING)
+				&& player.onGround() && EatAction.shouldEat(player)) {
+			eater.begin();
+			status = Status.EATING;
+			tickEating(minecraft, player);
+			return true;
+		}
 		return false;
+	}
+
+	/**
+	 * Releases any interaction holding the use key down — an eat in progress, or a raised shield.
+	 *
+	 * <p>Both {@link EatAction} and {@link CombatAction} keep {@code keyUse} pressed across ticks, so
+	 * whenever a higher-priority behaviour takes the tick from them it must call this first. Otherwise
+	 * the key stays held and drives whatever reaches the main hand next — most damagingly a water
+	 * bucket during a clutch. Both cancels are idempotent, so calling it when nothing is held is
+	 * harmless.</p>
+	 */
+	private void releaseInteractions(Minecraft minecraft, LocalPlayer player) {
+		eater.cancel(minecraft);
+		combat.cancel(minecraft, player);
+	}
+
+	private void tickEating(Minecraft minecraft, LocalPlayer player) {
+		switch (eater.tick(minecraft, player, input)) {
+			case WORKING -> {
+				// keep holding the item
+			}
+			case NO_MATERIAL -> {
+				eater.cancel(minecraft);
+				fetchNearby(minecraft, player, InventoryManager::isFood, "food");
+				replan(minecraft);
+			}
+			case DONE, FAILED -> {
+				eater.cancel(minecraft);
+				// Resume by replanning, so we pick up from wherever we actually stand.
+				replan(minecraft);
+			}
+		}
 	}
 
 	/**
@@ -1643,6 +1737,13 @@ public final class BotController {
 		ticksOffPath = 0;
 		if (minecraft != null) {
 			breaker.cancel(minecraft);
+			// Release the use key too, or an eat or a raised shield in progress stays held past the
+			// reset — the player would keep eating, or stand frozen behind a shield, after the bot
+			// stopped or replanned.
+			eater.cancel(minecraft);
+			if (minecraft.player != null) {
+				combat.cancel(minecraft, minecraft.player);
+			}
 		}
 		placer.cancel();
 		doorOpener.reset();

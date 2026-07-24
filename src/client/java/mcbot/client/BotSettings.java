@@ -432,4 +432,38 @@ public final class BotSettings {
 	 * because the block-grid model assumes the player's feet sit on a block boundary.
 	 */
 	public static final double MIN_GROUND_HEIGHT = 0.9;
+
+	// ---------------------------------------------------------------- survival: combat and eating
+	//
+	// Not Baritone's territory — it has no combat or hunger handling at all. Kept as a deliberate
+	// superset, because a navigation bot that starves or gets beaten to death mid-route does not
+	// finish the route.
+
+	/**
+	 * Eat when hunger is at or below this. Sprinting needs more than 6 hunger points, so topping up
+	 * well before that keeps the bot at sprint speed rather than trudging.
+	 */
+	public static final int EAT_BELOW_FOOD_LEVEL = 14;
+
+	/** Below this health an emergency food (golden apple) is worth spending. */
+	public static final float EMERGENCY_HEAL_HEALTH = 6.0f;
+
+	/** Missing health that justifies eating purely to enable regeneration. */
+	public static final float HEAL_BY_EATING_THRESHOLD = 4.0f;
+
+	/** Natural regeneration only runs at or above this hunger level. */
+	public static final int REGEN_FOOD_LEVEL = 18;
+
+	/** Attack-strength fraction to wait for. Swinging early does a fraction of the damage. */
+	public static final float ATTACK_STRENGTH_THRESHOLD = 0.9f;
+
+	/**
+	 * Distance at which a hostile is dealt with. Deliberately close to vanilla's 3-block attack
+	 * reach: the bot defends itself from what reaches it, rather than chasing everything it sees
+	 * and never finishing the journey.
+	 */
+	public static final double COMBAT_ENGAGE_RANGE = 3.5;
+
+	/** Keep this far from a swelling creeper. Trading hits with one is never worth it. */
+	public static final double CREEPER_DANGER_RANGE = 6.0;
 }

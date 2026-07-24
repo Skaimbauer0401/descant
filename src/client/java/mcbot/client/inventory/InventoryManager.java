@@ -310,4 +310,65 @@ public final class InventoryManager {
 				? MENU_HOTBAR_START + inventorySlot
 				: inventorySlot;
 	}
+
+	public static boolean equipFood(Minecraft minecraft, LocalPlayer player) {
+		return equip(minecraft, player, InventoryManager::isFood);
+	}
+
+	public static boolean hasFood(LocalPlayer player) {
+		return has(player, InventoryManager::isFood);
+	}
+
+	public static boolean isFood(ItemStack stack) {
+		return stack.has(DataComponents.FOOD);
+	}
+
+	public static boolean isEmergencyFood(ItemStack stack) {
+		return EMERGENCY_FOODS.contains(stack.getItem());
+	}
+
+	/**
+	 * Equips the most sensible food for the hunger actually missing.
+	 *
+	 * <p>Grabbing the first edible thing in the inventory is how a bot ends up eating a golden
+	 * apple to top up one hunger point, or poisoning itself on rotten flesh while carrying bread.
+	 * This prefers the food that fills the gap with least waste, keeps golden apples back for
+	 * emergency healing, and only falls back to the risky stuff when there is nothing else.</p>
+	 *
+	 * @param missingHunger hunger points below full, used to avoid overeating good food
+	 */
+	public static boolean equipBestFood(Minecraft minecraft, LocalPlayer player, int missingHunger) {
+		if (equipBest(minecraft, player,
+				stack -> scoreFood(stack, missingHunger, false), Double.NEGATIVE_INFINITY)) {
+			return true;
+		}
+		// Nothing wholesome left — rotten flesh beats starving.
+		return equipBest(minecraft, player,
+				stack -> scoreFood(stack, missingHunger, true), Double.NEGATIVE_INFINITY);
+	}
+
+	/** Equips a golden apple or similar, for when health matters more than the hunger bar. */
+	public static boolean equipEmergencyFood(Minecraft minecraft, LocalPlayer player) {
+		return equip(minecraft, player, stack -> EMERGENCY_FOODS.contains(stack.getItem()));
+	}
+
+	public static boolean hasEmergencyFood(LocalPlayer player) {
+		return has(player, stack -> EMERGENCY_FOODS.contains(stack.getItem()));
+	}
+
+	/** Equips the best weapon available, leaving the hand alone if nothing beats a fist. */
+	public static boolean equipBestWeapon(Minecraft minecraft, LocalPlayer player) {
+		return equipBest(minecraft, player, InventoryManager::weaponScore, 1.0);
+	}
+
+	/**
+	 * Whether the player carries food it would actually spend on ordinary hunger.
+	 *
+	 * <p>Distinct from {@link #hasFood}: a golden apple satisfies {@code hasFood} but is held back
+	 * for emergencies, so a bot carrying <em>only</em> golden apples would forever decide it should
+	 * eat and then refuse to, standing still. This is what {@code shouldEat} must check.</p>
+	 */
+	public static boolean hasEdibleFood(LocalPlayer player) {
+		return has(player, stack -> isFood(stack) && !isEmergencyFood(stack));
+	}
 }
