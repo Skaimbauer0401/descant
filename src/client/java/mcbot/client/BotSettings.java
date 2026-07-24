@@ -433,6 +433,16 @@ public final class BotSettings {
 	 */
 	public static final double MIN_GROUND_HEIGHT = 0.9;
 
+	/**
+	 * Lowest collision surface that still counts as something to stand on <em>inside</em> its own
+	 * cell — see {@link mcbot.client.path.WorldView#isHalfSupport}.
+	 *
+	 * <p>Set just under a slab's 0.5 so bottom slabs qualify. Anything shallower (a carpet, a pressure
+	 * plate, a lily pad) is walked over rather than stood on, and modelling it as a stance would only
+	 * add nodes that behave identically to the ground beneath them.</p>
+	 */
+	public static final double MIN_HALF_GROUND_HEIGHT = 0.45;
+
 	// ---------------------------------------------------------------- survival: combat and eating
 	//
 	// Not Baritone's territory — it has no combat or hunger handling at all. Kept as a deliberate

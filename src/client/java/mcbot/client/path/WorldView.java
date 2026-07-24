@@ -80,13 +80,25 @@ public final class WorldView {
 	@SuppressWarnings("deprecation") // blocksMotion(): see note on the class-level javadoc
 	public boolean isPassable(BlockPos pos) {
 		BlockState state = state(pos);
+		if (state.isAir()) {
+			return true; // far and away the common case; take it before touching anything else
+		}
 		if (isHazard(pos, state)) {
 			return false;
 		}
 		if (isOpenable(state)) {
 			return true; // shut right now, but the bot can open it — see isOpenable
 		}
-		return !state.blocksMotion();
+		if (state.blocksMotion()) {
+			return false;
+		}
+		// Not flagged as motion-blocking, yet plenty of small attached blocks still have a collision
+		// box the player walks straight into. A cocoa pod on a jungle log is the one that catches this
+		// bot: the planner routed through the pod's cell and then wedged against it, with nothing in
+		// the model to explain why it had stopped. The collision shape is the authority, so ask it —
+		// only for non-air blocks that claimed not to block motion, which keeps the cost off the hot
+		// path. Blocks with genuinely no collision (grass, flowers) answer from a shared empty shape.
+		return state.getCollisionShape(level, pos).isEmpty();
 	}
 
 	/**
@@ -141,8 +153,53 @@ public final class WorldView {
 		return isPassable(feet) && isPassable(feet.above());
 	}
 
-	/** True when the player could stand here right now, without any building or mining. */
+	/**
+	 * True when a block half-fills its own cell and the player stands on top of it <em>inside</em>
+	 * that cell — a bottom slab being the everyday case.
+	 *
+	 * <p>This is the one shape the block-grid model genuinely cannot express, and why slabs were
+	 * excluded outright for so long. Everywhere else, "standing at cell P" means the feet sit on P's
+	 * floor and something solid fills P−1. On a bottom slab the feet sit at {@code P.y + 0.5} — still
+	 * within P, because that is where the coordinate floors to — so the support and the stance occupy
+	 * the <em>same</em> cell. Treating that as a separate kind of footing is what lets the planner use
+	 * slabs without the node coordinate and the player's real position drifting apart.</p>
+	 *
+	 * <p>Deliberately narrow: stairs and top slabs have collision reaching the top of their cell, so
+	 * they are ordinary {@link #isStandable} ground and are not covered here.</p>
+	 */
+	@SuppressWarnings("deprecation") // blocksMotion(): see note on the class-level javadoc
+	public boolean isHalfSupport(BlockPos pos) {
+		BlockState state = state(pos);
+		if (state.isAir() || isHazard(pos, state) || !state.blocksMotion()) {
+			return false;
+		}
+		VoxelShape shape = state.getCollisionShape(level, pos);
+		if (shape.isEmpty()) {
+			return false;
+		}
+		double top = shape.max(Direction.Axis.Y);
+		return top >= BotSettings.MIN_HALF_GROUND_HEIGHT && top < BotSettings.MIN_GROUND_HEIGHT;
+	}
+
+	/**
+	 * Standing surface height for a player whose feet are at {@code feet}, measured from that cell's
+	 * base — {@code 0.5} on a bottom slab, {@code 0} on ordinary ground.
+	 */
+	public double stanceHeight(BlockPos feet) {
+		return isHalfSupport(feet) ? surfaceHeight(feet) : 0.0;
+	}
+
+	/**
+	 * True when the player could stand here right now, without any building or mining.
+	 *
+	 * <p>The half-support case needs an extra cell of headroom. Standing on a bottom slab raises the
+	 * whole body by half a block, so the head reaches into the cell two above rather than stopping at
+	 * the top of the one above.</p>
+	 */
 	public boolean canStandAt(BlockPos feet) {
+		if (isHalfSupport(feet)) {
+			return isPassable(feet.above()) && isPassable(feet.above(2));
+		}
 		return fitsAt(feet) && isStandable(feet.below());
 	}
 

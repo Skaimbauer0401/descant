@@ -364,6 +364,23 @@ public final class PathFinder {
 		return simPassable(feet) && simPassable(feet.above());
 	}
 
+	/**
+	 * A half-height block filling this cell's floor that the player stands on top of, inside the cell.
+	 * A cell the route has edited is a full cube or empty air, so it is never a half support.
+	 */
+	private boolean simHalfSupport(BlockPos pos) {
+		return planned(pos) == null && world.isHalfSupport(pos);
+	}
+
+	/**
+	 * Whether the player can stand on a half block filling this cell. Standing half a block higher
+	 * pushes the head into the cell two above rather than stopping at the top of the one above, so
+	 * this needs a taller clearance than ordinary ground does.
+	 */
+	private boolean simStandsOnHalf(BlockPos feet) {
+		return simHalfSupport(feet) && simPassable(feet.above()) && simPassable(feet.above(2));
+	}
+
 	/** Water here. A cell we placed into or dug out is solid or air respectively — never water. */
 	private boolean simWater(BlockPos pos) {
 		return planned(pos) == null && world.isWater(pos);
@@ -614,6 +631,11 @@ public final class PathFinder {
 					add(node, target, baseCost + BotSettings.PLACE_COST, NO_BREAK, target.below());
 				}
 			}
+		} else if (simStandsOnHalf(target)) {
+			// Stepping onto a bottom slab. The destination node is the slab's own cell, because that is
+			// where the feet coordinate lands; half a block is inside the player's automatic step
+			// height, so this costs a plain walk with no jump.
+			addWithClimb(node, from, target, baseCost);
 		} else if (simStandable(target) && simFitsAt(target.above())) {
 			// A one-block step up. Jumping needs clearance above our own head, which may itself
 			// have to be mined out — otherwise a low ceiling blocks every climb.
@@ -668,6 +690,12 @@ public final class PathFinder {
 			}
 			if (simWater(feet)) {
 				// Water cancels fall damage regardless of height.
+				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK, NO_BREAK, null);
+				return;
+			}
+			if (simHalfSupport(feet)) {
+				// Landed on a slab. Its cell is the stance, and the drop is half a block shorter than
+				// the cell count suggests — close enough not to matter for fall damage.
 				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK, NO_BREAK, null);
 				return;
 			}
@@ -759,7 +787,8 @@ public final class PathFinder {
 		// thing that lets pillars chain, since the search reads the live world where that block does
 		// not exist yet. Treading water, and hanging off a ladder, work as launch platforms just as
 		// well as ground does.
-		return simStandable(feet.below()) || simWater(feet) || world.isClimbable(feet);
+		return simStandable(feet.below()) || simWater(feet) || world.isClimbable(feet)
+				|| simHalfSupport(feet);
 	}
 
 	/**
