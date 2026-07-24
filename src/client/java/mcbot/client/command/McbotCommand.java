@@ -37,9 +37,10 @@ import net.minecraft.world.level.block.Blocks;
  *   /mcbot goto &lt;x&gt; &lt;z&gt;            travel to that column, at whatever height the ground is
  *   /mcbot goto &lt;y&gt;                reach that height, anywhere
  *   /mcbot walk  &lt;same forms&gt;      as above, but without modifying the world
- *   /mcbot find &lt;block|mob&gt; [true|false]  go to the nearest block or mob. Add `true` to mine
- *                                          or kill it and move on to the next; the default is
- *                                          false, which simply travels there
+ *   /mcbot find &lt;block|mob&gt; [true|false]  go to the nearest block or mob. Add `true` to keep
+ *                                          going — mining each block and moving on to the next,
+ *                                          or following a mob as it moves. The default is false,
+ *                                          which simply travels there once
  *   /mcbot stop | status | path | clutch
  * </pre>
  *

@@ -151,12 +151,6 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- survival
 
-	/**
-	 * Eat when hunger is at or below this. Sprinting needs more than 6 hunger points, so topping up
-	 * well before that keeps the bot at sprint speed rather than trudging.
-	 */
-	public static final int EAT_BELOW_FOOD_LEVEL = 14;
-
 	/** Downward speed (blocks/tick) past which a fall is considered committed. */
 	public static final double CLUTCH_MIN_FALL_SPEED = 0.5;
 
@@ -214,21 +208,6 @@ public final class BotSettings {
 	 * on the first ring, and a rare one skips almost every section without reading a block.</p>
 	 */
 	public static final int BLOCK_SEARCH_RADIUS = 320;
-
-	/** Radius searched for something worth digging up as building material. Kept short — a long
-	 * detour for two blocks of dirt is worse than not bridging at all. */
-	public static final int MATERIAL_SEARCH_RADIUS = 32;
-
-	/**
-	 * How many building blocks a gather detour aims to stock up.
-	 *
-	 * <p>One block per detour meant a round trip for every single placement — absurd on a tall
-	 * pillar. Gathering a full stack up front amortises the detour over many builds.</p>
-	 */
-	public static final int GATHER_TARGET_COUNT = 25;
-
-	/** Blocks above the bot's feet a gather target may sit and still be reachable from the ground. */
-	public static final int GATHER_HEIGHT_REACH = 2;
 
 	/** Radius searched when hunting for a mob. Entities only exist client-side when nearby. */
 	public static final double ENTITY_SEARCH_RADIUS = 192.0;
@@ -398,53 +377,6 @@ public final class BotSettings {
 	public static final double GOAL_VERTICAL_TOLERANCE = 1.0;
 
 	// ---------------------------------------------------------------- combat and healing
-
-	/**
-	 * Distance at which a hostile is dealt with. Deliberately close to vanilla's 3-block attack
-	 * reach: the bot defends itself from what reaches it, rather than chasing everything it sees
-	 * and never finishing the journey.
-	 */
-	public static final double COMBAT_ENGAGE_RANGE = 3.5;
-
-	/** Attack-strength fraction to wait for. Swinging early does a fraction of the damage. */
-	public static final float ATTACK_STRENGTH_THRESHOLD = 0.9f;
-
-	/** Keep this far from a swelling creeper. Trading hits with one is never worth it. */
-	public static final double CREEPER_DANGER_RANGE = 6.0;
-
-	/**
-	 * Within this distance a hunted mob is chased directly rather than pathfound to. Re-planning a
-	 * route every time a fleeing animal moves loses ground on every exchange; steering straight at
-	 * it tracks tick by tick.
-	 */
-	public static final double DIRECT_PURSUIT_RANGE = 16.0;
-
-	/** Height difference past which a direct chase would just walk into a wall — path instead. */
-	public static final double PURSUIT_HEIGHT_LIMIT = 3.0;
-
-	/**
-	 * Ticks of going nowhere before direct steering admits defeat.
-	 *
-	 * <p>Chasing and looting steer straight at a point instead of following a route, so the
-	 * path-progress stuck detector cannot see them at all — without this they wedge against a
-	 * corner and stay there.</p>
-	 */
-	public static final int DIRECT_STUCK_TICKS = 30;
-
-	/** Squared movement over one tick that still counts as making headway. */
-	public static final double DIRECT_PROGRESS_EPSILON_SQR = 0.0016;
-
-	/** Ticks to stay on the pathfinder after a direct chase got wedged, so it cannot bounce back. */
-	public static final int DIRECT_PURSUIT_COOLDOWN = 60;
-
-	/** Below this health an emergency food (golden apple) is worth spending. */
-	public static final float EMERGENCY_HEAL_HEALTH = 6.0f;
-
-	/** Natural regeneration only runs at or above this hunger level. */
-	public static final int REGEN_FOOD_LEVEL = 18;
-
-	/** Missing health that justifies eating purely to enable regeneration. */
-	public static final float HEAL_BY_EATING_THRESHOLD = 4.0f;
 
 	/** Interaction reach. Vanilla survival is 4.5; stay under it for block break/place. */
 	public static final double REACH = 4.0;

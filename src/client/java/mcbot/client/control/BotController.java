@@ -9,8 +9,6 @@ import mcbot.client.BotSettings;
 import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
-import mcbot.client.action.CombatAction;
-import mcbot.client.action.EatAction;
 import mcbot.client.action.WaterBucketClutch;
 import mcbot.client.inventory.InventoryManager;
 import mcbot.client.inventory.ItemScanner;
@@ -18,7 +16,6 @@ import mcbot.client.path.AirFinder;
 import mcbot.client.path.BlockSearcher;
 import mcbot.client.path.Path;
 import mcbot.client.path.PathFinder;
-import mcbot.client.path.WalkableLine;
 import mcbot.client.path.WorldView;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalBlock;
@@ -30,7 +27,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.ItemStack;
@@ -64,13 +60,10 @@ public final class BotController {
 		FOLLOWING,
 		BREAKING,
 		PLACING,
-		EATING,
 		CLUTCHING,
-		/** Defending against a hostile that got too close. */
-		FIGHTING,
 		/** Breaking the block we came to mine, having arrived beside it. */
 		MINING,
-		/** Walking over the drops left by a kill or a broken block. */
+		/** Walking over the drops left by a broken block. */
 		COLLECTING,
 		SUCCEEDED,
 		FAILED
@@ -88,9 +81,7 @@ public final class BotController {
 	private final BotInput input = new BotInput();
 	private final BlockBreaker breaker = new BlockBreaker();
 	private final BlockPlacer placer = new BlockPlacer();
-	private final EatAction eater = new EatAction();
 	private final WaterBucketClutch clutch = new WaterBucketClutch();
-	private final CombatAction combat = new CombatAction();
 	private final Consumer<Component> messageSink;
 
 	private Status status = Status.IDLE;
@@ -125,20 +116,12 @@ public final class BotController {
 
 	private String huntedName = "";
 
-	/** Whether a hunt mines / kills what it finds, or merely travels to it. */
+	/** Whether a hunt mines what it finds and moves on, or merely travels to it once. */
 	private boolean huntExecute = true;
 
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
 	private BlockPos mineTarget;
 	private Block mineTargetBlock;
-
-	/** Detouring to dig up scaffolding, having refused to spend the haul on it. */
-	private boolean gathering;
-
-	/** The hunt's own state, parked while the gather detour borrows the mining machinery. */
-	private BlockPos savedMineTarget;
-	private Block savedMineTargetBlock;
-	private Goal savedGoal;
 
 	/** Ticks spent sweeping up loot, for the grace period and the give-up timeout. */
 	private int collectTicks;
@@ -148,11 +131,6 @@ public final class BotController {
 
 	/** Where the loot should be lying — the broken block, or where the mob fell. */
 	private Vec3 collectAnchor;
-
-	/** Stuck tracking for the direct-steering states, which have no path to measure progress on. */
-	private Vec3 lastDirectPosition;
-	private int directStuckTicks;
-	private int directPursuitCooldown;
 
 	private PathFinder search;
 	private Path path;
@@ -207,7 +185,6 @@ public final class BotController {
 		this.fruitlessReplans = 0;
 		this.bestGoalDistance = Double.MAX_VALUE;
 		this.collecting = false;
-		this.gathering = false;
 		this.favouredRoute = Set.of(); // a new journey has no incumbent route to stay loyal to
 		resetPlan(null);
 		this.status = Status.PLANNING;
@@ -371,13 +348,14 @@ public final class BotController {
 		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), true, true);
 		huntedBlock = null;
 		huntedType = type;
-		// Only hold on to the individual when we mean to kill it; otherwise this is a one-off trip
-		// to where it happens to be standing.
+		// Hold on to the individual only when following it; otherwise this is a one-off trip to where
+		// it happened to be standing. Following is as far as this goes — the bot does not attack, the
+		// same as Baritone's follow, which only ever keeps a goal pinned to the entity.
 		huntedEntity = execute ? nearest : null;
 		huntedName = displayName;
 		huntExecute = execute;
 
-		message((execute ? "Hunting " : "Heading to ") + displayName + " at " + describeGoal() + ".");
+		message((execute ? "Following " : "Heading to ") + displayName + " at " + describeGoal() + ".");
 		return true;
 	}
 
@@ -394,20 +372,20 @@ public final class BotController {
 			return;
 		}
 		if (!huntedEntity.isAlive() || huntedEntity.isRemoved()) {
-			Vec3 whereItFell = huntedEntity.position();
+			// Nothing to follow any more. The bot no longer kills anything, so this is something else
+			// having got there first, or the entity simply leaving client range.
 			huntedEntity = null;
-			message(huntedName + " down.");
-			beginCollecting(minecraft, whereItFell);
+			message(huntedName + " is gone.");
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
 			return;
-		}
-		if (status == Status.FIGHTING) {
-			return; // within reach; let the fight play out
 		}
 
 		BlockPos where = BlockPos.containing(huntedEntity.position());
 		if (goal == null
 				|| where.distSqr(goal.approximatePosition()) > BotSettings.RETARGET_DISTANCE_SQR) {
-			goal = new GoalBlock(where);
+			goal = new GoalNear(where, ENTITY_GOAL_RADIUS);
 			replan(minecraft);
 		}
 	}
@@ -421,11 +399,7 @@ public final class BotController {
 		huntedEntity = null;
 		mineTarget = null;
 		mineTargetBlock = null;
-		savedMineTarget = null;
-		savedMineTargetBlock = null;
-		savedGoal = null;
 		collecting = false;
-		gathering = false;
 		status = Status.IDLE;
 		input.clear();
 	}
@@ -437,9 +411,7 @@ public final class BotController {
 				|| status == Status.PLACING
 				|| status == Status.MINING
 				|| status == Status.COLLECTING
-				|| status == Status.EATING
-				|| status == Status.CLUTCHING
-				|| status == Status.FIGHTING;
+				|| status == Status.CLUTCHING;
 	}
 
 	public BotInput input() {
@@ -517,8 +489,6 @@ public final class BotController {
 			case BREAKING, MINING -> "mining";
 			case PLACING -> "building";
 			case COLLECTING -> "collecting";
-			case EATING -> "eating";
-			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
 			case CLUTCHING -> "clutching";
 			case SUCCEEDED -> "done";
 			case FAILED -> "failed";
@@ -614,7 +584,12 @@ public final class BotController {
 	}
 
 	/**
-	 * Handles the things that will kill the bot if ignored: a fatal fall, drowning, starvation.
+	 * Handles the two things that will kill the bot mid-route if ignored: a fatal fall and drowning.
+	 *
+	 * <p>Both are Baritone's scope — a water-bucket landing is {@code allowWaterBucketFall}, and
+	 * neither is a "behaviour" so much as a movement the route has already committed to. Fighting and
+	 * eating used to live here too and no longer do: Baritone has no combat or hunger handling at all,
+	 * and this is meant to be that same base.</p>
 	 *
 	 * @return {@code true} when survival took over this tick and the route should not be driven
 	 */
@@ -625,10 +600,6 @@ public final class BotController {
 			return true;
 		}
 		if (clutchEnabled && WaterBucketClutch.isNeeded(minecraft, player)) {
-			// Drop any held-use interaction before the clutch equips the bucket — a shield or an eat
-			// left holding the use key would fire the bucket the instant it reaches the main hand,
-			// dumping the water mid-air and wasting the clutch.
-			releaseInteractions(minecraft, player);
 			clutch.begin();
 			status = Status.CLUTCHING;
 			tickClutch(minecraft, player);
@@ -637,68 +608,10 @@ public final class BotController {
 
 		// 2. Running out of air.
 		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL) {
-			releaseInteractions(minecraft, player); // same reason: no shield/eat held while surfacing
 			swimForAir(minecraft, player);
 			return true;
 		}
-
-		// 3. Something hostile within arm's reach. A threat owns the whole tick: fighting it and
-		// stopping to eat are mutually exclusive, and trying to arbitrate the two every tick — off a
-		// health threshold that jitters as hits land — is exactly what made the bot dither, shield
-		// half-raised from an abandoned eat while it stood there deciding. So a threat here first
-		// cancels any eat in progress (releasing the use key, which is what was raising the shield),
-		// then hands the tick to combat, which blocks and strikes as a single coherent behaviour.
-		//
-		// Note this no longer bails out at low health. Standing still eating next to a mob that is
-		// hitting you is strictly worse than fighting it off — you take the hits either way, only one
-		// removes the threat — and combat now blocks with the shield to soften the exchange.
-		LivingEntity threat = CombatAction.findThreat(minecraft, player);
-		if (threat != null) {
-			if (status == Status.EATING) {
-				eater.cancel(minecraft);
-			}
-			status = Status.FIGHTING;
-			if (combat.tick(minecraft, player, input, threat) != ActionState.WORKING) {
-				combat.cancel(minecraft, player);
-				status = Status.FOLLOWING;
-			}
-			return true;
-		}
-		if (pursueQuarry(minecraft, player)) {
-			return true;
-		}
-		if (status == Status.FIGHTING) {
-			combat.cancel(minecraft, player); // threat gone or fled; drop the shield and resume
-			status = Status.FOLLOWING;
-		}
-
-		// 4. Hunger and healing. Only reached when nothing hostile is near, so eating never overlaps
-		// a fight. Only worth stopping for between path actions, never mid-mine.
-		if (status == Status.EATING) {
-			tickEating(minecraft, player);
-			return true;
-		}
-		if ((status == Status.FOLLOWING || status == Status.PLANNING)
-				&& player.onGround() && EatAction.shouldEat(player)) {
-			eater.begin();
-			status = Status.EATING;
-			tickEating(minecraft, player);
-			return true;
-		}
 		return false;
-	}
-
-	/**
-	 * Releases any interaction that holds the use key down — an in-progress eat, or a raised shield.
-	 *
-	 * <p>Both {@link EatAction} and {@link CombatAction} keep {@code keyUse} pressed across ticks.
-	 * Whenever a higher-priority behaviour takes the tick from them it must call this first, or the
-	 * key stays held and drives the <em>next</em> main-hand item — most damagingly a water bucket
-	 * during a clutch. Both cancels are idempotent, so calling it when nothing is held is harmless.</p>
-	 */
-	private void releaseInteractions(Minecraft minecraft, LocalPlayer player) {
-		eater.cancel(minecraft);
-		combat.cancel(minecraft, player);
 	}
 
 	/**
@@ -732,65 +645,6 @@ public final class BotController {
 		input.jump(target.y > player.getY() + 0.2);
 	}
 
-	/**
-	 * Runs the quarry down: chases it directly and attacks once in reach.
-	 *
-	 * <p>A hunt is not self-defence. A pig will never attack, so waiting to be threatened means
-	 * standing next to it forever; and it runs when hit, so re-planning a path every time it moves
-	 * loses ground on every exchange. Within {@link BotSettings#DIRECT_PURSUIT_RANGE} the bot
-	 * therefore steers straight at it and sprints, which tracks a fleeing animal tick by tick
-	 * instead of chasing where it used to be.</p>
-	 *
-	 * <p>Anything further away, or far enough above or below that running at it would just mean
-	 * walking into a wall, is left to the pathfinder.</p>
-	 *
-	 * @return whether the hunt took over this tick
-	 */
-	private boolean pursueQuarry(Minecraft minecraft, LocalPlayer player) {
-		if (!huntExecute || !(huntedEntity instanceof LivingEntity quarry) || !quarry.isAlive()) {
-			return false;
-		}
-		double distance = quarry.distanceTo(player);
-
-		if (distance <= BotSettings.COMBAT_ENGAGE_RANGE) {
-			status = Status.FIGHTING;
-			combat.tick(minecraft, player, input, quarry);
-			return true;
-		}
-		if (directPursuitCooldown > 0) {
-			directPursuitCooldown--;
-			return false; // recently wedged; stay on the pathfinder for now
-		}
-		if (distance > BotSettings.DIRECT_PURSUIT_RANGE
-				|| Math.abs(quarry.getY() - player.getY()) > BotSettings.PURSUIT_HEIGHT_LIMIT) {
-			return false; // too far or too far vertically; let the pathfinder handle it
-		}
-		if (!canWalkStraightTo(minecraft, player, quarry.position())) {
-			// Something solid between us. Running at a wall and jumping is not pursuit — hand it
-			// to the pathfinder, which can go round, through, or over.
-			return false;
-		}
-
-		if (directSteeringStuck(player)) {
-			// Walked into something a straight line cannot solve. Hand back to the pathfinder,
-			// which can route around it, and stay off direct pursuit long enough not to bounce
-			// straight back into the same corner.
-			combat.cancel(minecraft, player); // running again, not blocking
-			resetDirectProgress();
-			directPursuitCooldown = BotSettings.DIRECT_PURSUIT_COOLDOWN;
-			goal = new GoalBlock(BlockPos.containing(quarry.position()));
-			replan(minecraft);
-			return true;
-		}
-
-		// Sprinting the animal down, not standing toe to toe: drop the shield so it does not slow
-		// the chase (it will go back up the moment we close to melee range above).
-		combat.cancel(minecraft, player);
-		status = Status.FIGHTING;
-		steerDirectlyTo(player, quarry.position(), true);
-		return true;
-	}
-
 	private void tickClutch(Minecraft minecraft, LocalPlayer player) {
 		switch (clutch.tick(minecraft, player, input)) {
 			case WORKING -> {
@@ -802,24 +656,6 @@ public final class BotController {
 			}
 			case NO_MATERIAL, FAILED -> {
 				clutch.cancel();
-				replan(minecraft);
-			}
-		}
-	}
-
-	private void tickEating(Minecraft minecraft, LocalPlayer player) {
-		switch (eater.tick(minecraft, player, input)) {
-			case WORKING -> {
-				// keep holding the item
-			}
-			case NO_MATERIAL -> {
-				eater.cancel(minecraft);
-				fetchNearby(minecraft, player, InventoryManager::isFood, "food");
-				replan(minecraft);
-			}
-			case DONE, FAILED -> {
-				eater.cancel(minecraft);
-				// Resume by replanning, so we pick up from wherever we actually stand.
 				replan(minecraft);
 			}
 		}
@@ -1305,13 +1141,15 @@ public final class BotController {
 	}
 
 	/**
-	 * Starts sweeping up whatever the last kill or broken block left behind.
+	 * Starts sweeping up whatever the block we just broke left behind.
 	 *
-	 * <p>Mining and killing are pointless if the results stay on the floor, and a hunt that moves
-	 * straight to the next target walks away from its own loot every time.</p>
+	 * <p>Mining is pointless if the results stay on the floor, and a hunt that moves straight to the
+	 * next target walks away from its own drops every time. Baritone does the same thing from the
+	 * other direction — {@code mineScanDroppedItems} makes dropped items of the wanted type valid
+	 * pathing destinations in their own right.</p>
 	 */
 	/**
-	 * @param anchor where the drops should be — the block that broke, or where the mob died. Loot
+	 * @param anchor where the drops should be — the block that broke. Loot
 	 *               is only swept near this point, so the bot collects what <em>it</em> produced
 	 *               rather than every stray item it happens to walk past.
 	 */
@@ -1320,11 +1158,10 @@ public final class BotController {
 		collecting = true;
 		collectAnchor = anchor;
 		collectTicks = 0;
-		resetDirectProgress();
 		status = Status.COLLECTING;
 	}
 
-	/** Nearest drop belonging to the thing we just mined or killed, or {@code null}. */
+	/** Nearest drop belonging to the block we just mined, or {@code null}. */
 	private ItemEntity findOwnDrop(Minecraft minecraft) {
 		if (collectAnchor == null) {
 			return null;
@@ -1336,7 +1173,7 @@ public final class BotController {
 	/**
 	 * Waits for the drops to appear, then hands each one to the normal navigation machinery.
 	 *
-	 * <p>This state only covers the gap between the kill and the loot existing. Actually getting
+	 * <p>This state only covers the gap between the block breaking and the drops existing. Actually getting
 	 * there is a routing problem — the loot may be behind the wall we just mined through, at the
 	 * bottom of a hole, or across a fence — so it becomes an ordinary goal rather than something
 	 * walked at blindly.</p>
@@ -1380,183 +1217,8 @@ public final class BotController {
 		continueHunt(minecraft);
 	}
 
-	/**
-	 * Whether direct steering has stopped making headway.
-	 *
-	 * <p>The main stuck detector measures progress along a <em>path</em>, so it is blind to the
-	 * states that steer straight at a point — chasing a mob and walking to loot. Those wedge
-	 * against corners and doorways exactly like path following does, and without their own check
-	 * they simply stay wedged.</p>
-	 */
-	private boolean directSteeringStuck(LocalPlayer player) {
-		Vec3 now = player.position();
-		if (lastDirectPosition != null
-				&& now.distanceToSqr(lastDirectPosition) < BotSettings.DIRECT_PROGRESS_EPSILON_SQR) {
-			directStuckTicks++;
-		} else {
-			directStuckTicks = 0;
-		}
-		lastDirectPosition = now;
-		return directStuckTicks > BotSettings.DIRECT_STUCK_TICKS;
-	}
-
-	private void resetDirectProgress() {
-		directStuckTicks = 0;
-		lastDirectPosition = null;
-	}
-
-	/**
-	 * Whether the player could walk to {@code target} in a straight line from where they stand.
-	 *
-	 * <p>The gate on steering directly at anything. Without it, "walk towards it and jump" is the
-	 * entire behaviour, which works beautifully on open ground and not at all through a wall.</p>
-	 */
-	private boolean canWalkStraightTo(Minecraft minecraft, LocalPlayer player, Vec3 target) {
-		if (Math.abs(target.y - player.getY()) > 1.0) {
-			return false; // different level: needs a jump, a drop, or stairs — that is routing
-		}
-		return WalkableLine.canWalkStraight(
-				new WorldView(minecraft.level), player.position(), BlockPos.containing(target));
-	}
-
-	/** Walks straight at a point, hopping over anything it bumps into. */
-	private void steerDirectlyTo(LocalPlayer player, Vec3 target, boolean sprint) {
-		float desiredYaw = Steering.yawTowards(player.position(), target);
-		player.setYRot(Steering.approach(player.getYRot(), desiredYaw, BotSettings.NAV_TURN_PER_TICK));
-		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
-
-		float yawError = Steering.angleDifference(player.getYRot(), desiredYaw);
-		input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE);
-		input.sprint(sprint && yawError < BotSettings.SPRINT_ANGLE_THRESHOLD);
-
-		if (player.horizontalCollision && player.onGround()) {
-			input.jump(true);
-		}
-		if (target.y > player.getY() + 0.4 && player.onGround()) {
-			input.jump(true);
-		}
-	}
-
-	/**
-	 * Detours to dig up something worthless to build with.
-	 *
-	 * <p>Reached when the only blocks carried are the ones we came to collect. Rather than spending
-	 * the haul on scaffolding or abandoning the route, the bot goes and mines a bit of dirt.</p>
-	 *
-	 * @return whether a detour was started
-	 */
-	private boolean gatherBuildingMaterial(Minecraft minecraft, LocalPlayer player) {
-		// Already carrying a decent stack — no need to dig more.
-		if (InventoryManager.countBuildingBlocks(player, huntedBlock) >= BotSettings.GATHER_TARGET_COUNT) {
-			return false;
-		}
-
-		Block avoid = huntedBlock;
-		WorldView world = new WorldView(minecraft.level);
-		int feetY = BlockPos.containing(player.position()).getY();
-
-		BlockPos found = BlockSearcher.findNearest(
-				minecraft.level,
-				BlockPos.containing(player.position()),
-				BotSettings.MATERIAL_SEARCH_RADIUS,
-				state -> WorldView.isScaffoldSource(state) && state.getBlock() != avoid,
-				(pos, state) -> isSurfaceGatherTarget(world, pos, feetY));
-
-		if (found == null) {
-			return false; // no exposed surface block worth digging within range
-		}
-		BlockPos stance = surfaceStance(world, found);
-		if (stance == null) {
-			return false; // no way to reach it without descending
-		}
-
-		if (!gathering) {
-			// First block of the detour. Park the whole hunt state in gather-specific fields, NOT
-			// in resumeGoal — that is consumed by succeed()'s first branch, which would fire the
-			// instant we reach the block and return before ever mining it (the "digging some grass"
-			// bug). Subsequent blocks keep gathering true and leave the saved state untouched.
-			gathering = true;
-			savedGoal = goal;
-			savedMineTarget = mineTarget;
-			savedMineTargetBlock = mineTargetBlock;
-			message("Out of spare blocks — gathering " + BotSettings.GATHER_TARGET_COUNT + ".");
-		}
-
-		mineTarget = found;
-		mineTargetBlock = minecraft.level.getBlockState(found).getBlock();
-		// The stance sits on the surface *beside* the block, one level up — never below us, so the
-		// route is a surface walk and mining the block does not drop us into a hole. This is the
-		// whole fix: gathering no longer reuses approachPosition, whose descend-and-tunnel fallback
-		// was what made the bot dig straight down.
-		goal = new GoalBlock(stance);
-		replan(minecraft);
-		return true;
-	}
-
-	/**
-	 * Whether a scaffold block should be dug for material — i.e. it is part of the exposed top
-	 * layer, not buried and not below where the bot stands.
-	 *
-	 * <p>Without this the nearest scaffold source is the block directly under the bot's feet: it
-	 * mines that, drops into the hole, finds the next block now below it, and tunnels straight down
-	 * — then has to pillar back out using the very blocks it dug, netting nothing. Requiring open
-	 * air above the block, and a level near the bot's own, keeps it stripping the surface sideways
-	 * instead.</p>
-	 */
-	private static boolean isSurfaceGatherTarget(WorldView world, BlockPos pos, int feetY) {
-		if (pos.getY() < feetY - 1) {
-			return false; // below us — digging it means descending
-		}
-		if (pos.getY() > feetY + BotSettings.GATHER_HEIGHT_REACH) {
-			return false; // higher than we can comfortably reach from the ground
-		}
-		if (!world.isPassable(pos.above())) {
-			return false; // buried under other blocks, not part of the exposed surface
-		}
-		return surfaceStance(world, pos) != null; // and reachable without going below it
-	}
-
-	/**
-	 * A place to stand beside a block to mine it from the surface, or {@code null}.
-	 *
-	 * <p>The stance is always on top of a horizontal neighbour, one level above the block — so it is
-	 * never below the block, the route to it never descends, and breaking the block (which is beside
-	 * and below the feet, not under them) cannot drop the bot in. This is what keeps gathering to
-	 * the top layer instead of tunnelling.</p>
-	 */
-	private static BlockPos surfaceStance(WorldView world, BlockPos block) {
-		for (Direction dir : new Direction[] {
-				Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST }) {
-			BlockPos stance = block.relative(dir).above();
-			if (world.isKnown(stance) && world.canStandAt(stance)) {
-				return stance;
-			}
-		}
-		return null;
-	}
-
 	/** Looks for the next target of the hunted kind, finishing the hunt when none are left. */
 	private void continueHunt(Minecraft minecraft) {
-		// In the middle of a material detour. Keep digging until we have a full stack, or until
-		// there is nothing left worth digging, then restore the hunt we interrupted.
-		if (gathering) {
-			LocalPlayer digger = minecraft.player;
-			if (digger != null && gatherBuildingMaterial(minecraft, digger)) {
-				return; // another block queued up
-			}
-			gathering = false;
-			mineTarget = savedMineTarget;
-			mineTargetBlock = savedMineTargetBlock;
-			goal = savedGoal;
-			savedMineTarget = null;
-			savedMineTargetBlock = null;
-			savedGoal = null;
-			allowPlace = allowPlaceRequested;
-			message("Got building material — carrying on.");
-			replan(minecraft);
-			return;
-		}
-
 		Block block = huntedBlock;
 		EntityType<?> type = huntedType;
 		String name = huntedName;
@@ -1600,7 +1262,9 @@ public final class BotController {
 						stack -> InventoryManager.isBuildingBlockExcept(stack, avoid),
 						"building blocks")) {
 					replan(minecraft);
-				} else if (!gatherBuildingMaterial(minecraft, player)) {
+				} else {
+					// Baritone's behaviour when it runs out of throwaway blocks: stop building and
+					// route around instead. It does not go off to dig up more, and neither do we.
 					allowPlace = false;
 					message("Nothing to build with nearby — continuing without placing.");
 					replan(minecraft);
@@ -1927,13 +1591,6 @@ public final class BotController {
 		ticksOffPath = 0;
 		if (minecraft != null) {
 			breaker.cancel(minecraft);
-			// Release the use key too, or an eat or a raised shield in progress stays held past the
-			// reset — the player would keep eating, or stand frozen behind a shield, after the bot
-			// stopped or replanned.
-			eater.cancel(minecraft);
-			if (minecraft.player != null) {
-				combat.cancel(minecraft, minecraft.player);
-			}
 		}
 		placer.cancel();
 	}

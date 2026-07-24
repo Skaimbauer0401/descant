@@ -35,35 +35,6 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  */
 public final class WorldView {
 
-	/**
-	 * Cheap, plentiful blocks worth digging up purely to have something to build with.
-	 *
-	 * <p>An explicit whitelist rather than "anything solid": the bot needs scaffolding, not a
-	 * licence to dismantle whatever happens to be nearest. Nobody wants it quarrying a wall of
-	 * someone's house because it needed two blocks to bridge a gap.</p>
-	 */
-	private static final Set<Block> SCAFFOLD_SOURCES = Set.of(
-			Blocks.DIRT,
-			Blocks.COARSE_DIRT,
-			Blocks.ROOTED_DIRT,
-			Blocks.GRASS_BLOCK,
-			Blocks.PODZOL,
-			Blocks.STONE,
-			Blocks.COBBLESTONE,
-			Blocks.DEEPSLATE,
-			Blocks.COBBLED_DEEPSLATE,
-			Blocks.TUFF,
-			Blocks.ANDESITE,
-			Blocks.DIORITE,
-			Blocks.GRANITE,
-			Blocks.NETHERRACK,
-			Blocks.END_STONE);
-
-	/** Whether this block is worth mining just to obtain building material. */
-	public static boolean isScaffoldSource(BlockState state) {
-		return SCAFFOLD_SOURCES.contains(state.getBlock());
-	}
-
 	/** Blocks that damage or trap the player. The bot routes around these rather than through. */
 	private static final Set<Block> HAZARDS = Set.of(
 			Blocks.LAVA,
