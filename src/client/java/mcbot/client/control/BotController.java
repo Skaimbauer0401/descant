@@ -157,6 +157,13 @@ public final class BotController {
 	private PathFinder lookaheadSearch;
 
 	/**
+	 * A <em>replacement</em> route being searched while the current one is still walked, used when a
+	 * hunted entity moves. Distinct from {@link #lookaheadSearch}, which extends the route rather than
+	 * replacing it; never both at once.
+	 */
+	private PathFinder retargetSearch;
+
+	/**
 	 * Positions of the route the pending replan is replacing, whose cost the search discounts. Captured
 	 * as the old plan is torn down; empty for a journey that is starting fresh.
 	 */
@@ -359,14 +366,13 @@ public final class BotController {
 		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), true, true);
 		huntedBlock = null;
 		huntedType = type;
-		// Hold on to the individual only when following it; otherwise this is a one-off trip to where
-		// it happened to be standing. Following is as far as this goes — the bot does not attack, the
-		// same as Baritone's follow, which only ever keeps a goal pinned to the entity.
+		// Hold on to the individual only when hunting it down; otherwise this is a one-off trip to
+		// where it happened to be standing.
 		huntedEntity = execute ? nearest : null;
 		huntedName = displayName;
 		huntExecute = execute;
 
-		message((execute ? "Following " : "Heading to ") + displayName + " at " + describeGoal() + ".");
+		message((execute ? "Hunting " : "Heading to ") + displayName + " at " + describeGoal() + ".");
 		return true;
 	}
 
@@ -383,21 +389,81 @@ public final class BotController {
 			return;
 		}
 		if (!huntedEntity.isAlive() || huntedEntity.isRemoved()) {
-			// Nothing to follow any more. The bot no longer kills anything, so this is something else
-			// having got there first, or the entity simply leaving client range.
+			Vec3 whereItFell = huntedEntity.position();
 			huntedEntity = null;
+			if (huntExecute) {
+				// We were hunting it down. Sweep up what it dropped, then go after the next one.
+				message(huntedName + " down.");
+				beginCollecting(minecraft, whereItFell);
+				return;
+			}
 			message(huntedName + " is gone.");
 			resetPlan(minecraft);
 			status = Status.SUCCEEDED;
 			input.clear();
 			return;
 		}
+		if (status == Status.FIGHTING) {
+			return; // in melee; let the fight play out rather than re-planning around it
+		}
 
 		BlockPos where = BlockPos.containing(huntedEntity.position());
 		if (goal == null
 				|| where.distSqr(goal.approximatePosition()) > BotSettings.RETARGET_DISTANCE_SQR) {
 			goal = new GoalNear(where, ENTITY_GOAL_RADIUS);
+			retarget(minecraft);
+		}
+	}
+
+	/**
+	 * Re-aims the route at a target that has moved, <em>without stopping to think</em>.
+	 *
+	 * <p>This is the whole reason chasing used to bypass the pathfinder. An ordinary
+	 * {@link #replan} throws the current route away and stands still in {@code PLANNING} until the
+	 * search finishes — which, against something that is running away, loses ground on every single
+	 * exchange. The old answer was a second control path that steered straight at the quarry and
+	 * ignored routing entirely; it worked on open ground and walked into walls everywhere else.</p>
+	 *
+	 * <p>The better answer is to keep walking the route we have while the replacement is searched in
+	 * the background, then swap. Same machinery as the segment lookahead, aimed at a replacement
+	 * rather than a continuation — so pursuit is now just ordinary path following that happens to be
+	 * re-planned often, and everything the pathfinder can do (round, over, through) still applies.</p>
+	 */
+	private void retarget(Minecraft minecraft) {
+		LocalPlayer player = minecraft.player;
+		// Only worth doing while there is a usable route to keep walking in the meantime.
+		if (player == null || status != Status.FOLLOWING || path == null || stepIndex >= path.size()) {
 			replan(minecraft);
+			return;
+		}
+		if (retargetSearch != null) {
+			return; // one already in flight; let it finish rather than restarting every tick
+		}
+		lookaheadSearch = null; // a continuation of the old route is worthless now
+		retargetSearch = newSearch(minecraft, player, feetPosition(player), favouredPositions());
+	}
+
+	/** Advances the background re-aim search and swaps the route in when it is ready. */
+	private void tickRetarget() {
+		if (retargetSearch == null) {
+			return;
+		}
+		switch (retargetSearch.advance(BotSettings.SEARCH_BUDGET_NANOS)) {
+			case SEARCHING -> {
+				// keep chewing next tick, while we walk the old route
+			}
+			case SUCCESS, PARTIAL -> {
+				path = retargetSearch.result();
+				stepIndex = 0;
+				breakIndex = 0;
+				ticksOffPath = 0;
+				// Progress bookkeeping refers to the old route; reset it or the stuck detector fires
+				// immediately on a route it has never seen.
+				furthestProgress = -1;
+				ticksSinceProgress = 0;
+				retargetSearch = null;
+			}
+			case FAILED -> retargetSearch = null; // keep walking the old route; try again next move
 		}
 	}
 
@@ -503,7 +569,7 @@ public final class BotController {
 			case PLACING -> "building";
 			case COLLECTING -> "collecting";
 			case EATING -> "eating";
-			case FIGHTING -> "fighting";
+			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
 			case CLUTCHING -> "clutching";
 			case SUCCEEDED -> "done";
 			case FAILED -> "failed";
@@ -659,6 +725,10 @@ public final class BotController {
 			}
 			return true;
 		}
+		// Nothing attacking us — but we may be the ones doing the attacking.
+		if (engageQuarry(minecraft, player)) {
+			return true;
+		}
 		if (status == Status.FIGHTING) {
 			combat.cancel(minecraft, player); // threat gone or fled; drop the shield and carry on
 			status = Status.FOLLOWING;
@@ -678,6 +748,32 @@ public final class BotController {
 			return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Attacks the hunted quarry once the route has brought us within reach.
+	 *
+	 * <p>The offensive half of combat, and deliberately the <em>only</em> offensive part: it strikes
+	 * what is already in front of it and never decides where to go. Closing the distance is the
+	 * pathfinder's job, kept up to date by {@link #retarget}. A hunt on a passive animal needs this
+	 * because self-defence alone would never fire — a pig will not attack, so waiting to be threatened
+	 * means standing next to it forever.</p>
+	 *
+	 * @return whether the fight took the tick
+	 */
+	private boolean engageQuarry(Minecraft minecraft, LocalPlayer player) {
+		if (!huntExecute || !(huntedEntity instanceof LivingEntity quarry) || !quarry.isAlive()) {
+			return false;
+		}
+		if (quarry.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE) {
+			return false; // not in reach yet; keep walking
+		}
+		if (status == Status.EATING) {
+			eater.cancel(minecraft);
+		}
+		status = Status.FIGHTING;
+		combat.tick(minecraft, player, input, quarry);
+		return true;
 	}
 
 	/**
@@ -833,9 +929,12 @@ public final class BotController {
 			return;
 		}
 
-		// Plan the continuation while we walk this segment, so arriving at the end of a partial route
-		// never means standing still to think.
-		tickLookahead(minecraft, player);
+		// Re-aim at a moving target, and plan the continuation of a partial route — both while walking,
+		// so neither ever means standing still to think.
+		tickRetarget();
+		if (retargetSearch == null) {
+			tickLookahead(minecraft, player);
+		}
 
 		Path.Step next = path.step(stepIndex);
 
@@ -1729,6 +1828,7 @@ public final class BotController {
 		path = null;
 		search = null;
 		lookaheadSearch = null;
+		retargetSearch = null;
 		stepIndex = 0;
 		breakIndex = 0;
 		ticksSinceProgress = 0;
