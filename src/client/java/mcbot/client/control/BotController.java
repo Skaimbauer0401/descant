@@ -17,6 +17,7 @@ import mcbot.client.path.AirFinder;
 import mcbot.client.path.BlockSearcher;
 import mcbot.client.path.Path;
 import mcbot.client.path.PathFinder;
+import mcbot.client.path.PathSmoother;
 import mcbot.client.path.WorldView;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalBlock;
@@ -786,13 +787,14 @@ public final class BotController {
 		// it, so this is where that promise is kept — one click in passing, without stopping the walk.
 		openDoorAhead(minecraft, player, next);
 
-		// Walk to the next node, and only the next node. There is deliberately no string-pulling here
-		// any more: A* already emits diagonal moves, so the route it returns is smooth in the only
-		// sense that matters, and smoothing on top of it aimed the bot at a waypoint several blocks
-		// away that the search had never checked was reachable in a straight line at speed. That is
-		// what made corners and ledges hard — the bot cut them with momentum the planner never
-		// accounted for. Baritone executes one movement at a time for exactly this reason.
-		walkTowards(minecraft, player, next);
+		// Steer at the furthest node reachable in a straight walkable line, not at the next one. This
+		// only changes what we aim at, never where we think we are. Removing it to match Baritone was a
+		// mistake: Baritone applies its rotations at full rate, we ease ours, and easing towards a
+		// target one block away means still turning on arrival — so the bot turned at every node and
+		// walking became stop-start.
+		int target = PathSmoother.furthestReachable(
+				new WorldView(minecraft.level), player.position(), path, stepIndex);
+		walkTowards(minecraft, player, path.step(target));
 	}
 
 	/**
@@ -1076,17 +1078,26 @@ public final class BotController {
 	/**
 	 * How far along the route the player has actually got, searching forward only.
 	 *
-	 * <p>Progress is now an exact "am I standing on this node?" test, which is Baritone's rule and is
-	 * only correct because the smoother is gone: with every node walked through rather than cut past,
-	 * the feet block <em>is</em> the answer, and it needs no tolerance to tune. Scanning a few nodes
-	 * ahead as well as the current one recovers cleanly from a fall or a shove that skipped some.</p>
+	 * <p>Projection onto the route, <em>not</em> an exact "am I standing on this node?" test. The exact
+	 * test is Baritone's, and it is correct there because Baritone walks through every node; with
+	 * smoothing back the bot deliberately cuts past intermediate nodes without ever coming near them,
+	 * and an exact test would sit waiting for an arrival that never happens. The two are a matched
+	 * pair — swapping one without the other is what stalled progress mid-route.</p>
+	 *
+	 * <p>An exact feet-block match is still honoured first, since when it does hold it is unambiguous
+	 * and lets a fall or a shove that skipped several nodes be picked up cleanly.</p>
 	 *
 	 * <p>Forward-only, so being pushed backwards shows up as a growing distance and trips the off-path
 	 * check rather than silently rewinding our progress.</p>
 	 */
 	private int advanceProgress(Minecraft minecraft, LocalPlayer player) {
 		BlockPos feet = feetPosition(player);
+		Vec3 position = player.position();
 		int limit = Math.min(path.size() - 1, stepIndex + BotSettings.MAX_LOOKAHEAD_STEPS);
+
+		int nearest = stepIndex;
+		double nearestDistance = position.distanceToSqr(
+				Vec3.atBottomCenterOf(path.step(stepIndex).pos()));
 
 		for (int index = stepIndex; index <= limit; index++) {
 			Path.Step step = path.step(index);
@@ -1094,17 +1105,19 @@ public final class BotController {
 				break; // never let progress run past mining or building we have not done yet
 			}
 			if (feet.equals(step.pos())) {
-				return index + 1; // standing on it: it is behind us, head for the next one
+				return index + 1; // standing squarely on it: it is behind us
+			}
+			double distance = position.distanceToSqr(Vec3.atBottomCenterOf(step.pos()));
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearest = index;
 			}
 		}
 
-		// No exact match. A partial block underfoot, or the arc of a jump, can leave the feet block a
-		// little off the node we are plainly standing at — so fall back to proximity for the node we
-		// are currently heading for.
+		// Close enough to the nearest node counts as having reached it, so a smoothed run that skims
+		// past a node still advances instead of stalling on it.
 		double arrival = BotSettings.NODE_ARRIVAL_DISTANCE * BotSettings.NODE_ARRIVAL_DISTANCE;
-		double distance = player.position().distanceToSqr(
-				Vec3.atBottomCenterOf(path.step(stepIndex).pos()));
-		return distance < arrival ? stepIndex + 1 : stepIndex;
+		return nearestDistance < arrival ? nearest + 1 : nearest;
 	}
 
 	/**
@@ -1356,29 +1369,35 @@ public final class BotController {
 	}
 
 	/**
-	 * Whether to sprint into the current step — Baritone's rule: only when the move after it carries
-	 * on in the same direction.
+	 * Whether to sprint towards the current step.
 	 *
-	 * <p>Sprinting is not a speed setting, it is a commitment: it roughly doubles the momentum the bot
-	 * carries into whatever comes next. Spend it on a straight run and it is free speed; spend it into
-	 * a turn and the bot swings wide of the corner, and into a ledge and it launches off the drop and
-	 * lands well past the column it meant to descend. Gating on the direction of the <em>next</em> move
-	 * is what makes that judgement, and it replaces a "sprint whenever a few nodes remain" heuristic
-	 * that knew nothing about the shape of the route and flickered on and off as the count changed.</p>
+	 * <p>Sprinting is a commitment, not a speed setting: it roughly doubles the momentum carried into
+	 * whatever comes next, which is free speed on a straight run and a swing wide of the corner on a
+	 * turn. So there are real reasons to withhold it — a drop, a squeeze, a stop to build.</p>
+	 *
+	 * <p>But it was withheld far too readily. Requiring the <em>next</em> move to continue in exactly
+	 * the same direction — Baritone's rule — turns sprinting off at every diagonal-to-cardinal
+	 * transition, which on real terrain is most of them, and the bot walked almost everywhere. Baritone
+	 * can afford that rule because it re-evaluates against its own smoothing-free, state-machine-driven
+	 * execution; applied on top of a smoothed route it just suppresses sprint. Now the default is to
+	 * sprint on any reasonable run, with collinearity kept only as a tie-breaker for the very next
+	 * node.</p>
 	 */
 	private boolean shouldSprint(Minecraft minecraft, LocalPlayer player) {
 		if (player.isInWater()) {
 			return false;
 		}
-		// A jump coming up overrides the corner rule: its run-up is decided by the jump's own length,
-		// because the long jump has to arrive at the launch block already at full speed, and the short
-		// one must arrive slower or it overshoots the landing.
+		// A jump coming up decides its own run-up: the long jump must reach the launch block at full
+		// speed, the short one must not or it overshoots the landing.
 		int jump = parkourWithin(BotSettings.PARKOUR_RUNWAY_STEPS);
 		if (jump > 0) {
 			return jump >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE;
 		}
-		if (stepIndex + 1 >= path.size()) {
+		if (remainingSteps() <= BotSettings.MIN_STEPS_FOR_SPRINT) {
 			return false; // nowhere left to sprint to; charging past the last node means doubling back
+		}
+		if (stepIndex + 1 >= path.size()) {
+			return false;
 		}
 
 		Path.Step current = path.step(stepIndex);
@@ -1392,7 +1411,20 @@ public final class BotController {
 		if (isEdging(minecraft, current) || isEdging(minecraft, next)) {
 			return false; // squeezing past a corner; vanilla would cancel the sprint on contact anyway
 		}
-		return isCollinear(current, next);
+		// Collinear is ideal, but a single turn ahead is not a reason to walk — the smoothed heading
+		// changes gradually, so the bot leans into the corner rather than swinging wide of it. Only a
+		// turn sharp enough to double back suppresses the sprint.
+		return !isSharpTurn(current, next);
+	}
+
+	/** Whether the route reverses direction between two steps — the one turn worth slowing for. */
+	private static boolean isSharpTurn(Path.Step first, Path.Step second) {
+		int firstX = first.pos().getX() - first.from().getX();
+		int firstZ = first.pos().getZ() - first.from().getZ();
+		int secondX = second.pos().getX() - second.from().getX();
+		int secondZ = second.pos().getZ() - second.from().getZ();
+		// Negative dot product means the new heading points back the way we came.
+		return firstX * secondX + firstZ * secondZ < 0;
 	}
 
 	/**

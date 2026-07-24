@@ -564,14 +564,16 @@ public final class PathFinder {
 		double baseCost = BotSettings.WALK_COST * distance;
 
 		if (diagonal) {
-			// At least one orthogonal component must be body-clear. Baritone's rule, and less strict
-			// than requiring both: with one side blocked the player still slides diagonally along the
-			// wall face, so the move is legal — it just cannot be sprinted, because brushing a wall
-			// cancels a sprint in vanilla anyway. Demanding both sides clear (the old rule) threw away
-			// every diagonal that hugs a corner, which is most of them indoors, and forced the search
-			// into staircases of cardinal moves instead.
-			if (!simFitsAt(from.offset(dx, 0, 0)) && !simFitsAt(from.offset(0, 0, dz))) {
-				return; // both corners solid: this really is cutting through a block
+			// Both orthogonal components must be body-clear, or the move cuts the corner of a block.
+			//
+			// Baritone only requires one, and permits the resulting squeeze along the wall face. That
+			// is legal in vanilla but it is not free: the player scrapes the corner, loses speed, and
+			// on a smoothed route the steering is already leaning into the turn when it happens. In
+			// practice it produced routes that wedged on corners, so this stays stricter than Baritone
+			// deliberately. A staircase of cardinal moves round the corner is slower on paper and
+			// considerably faster in the world.
+			if (!simFitsAt(from.offset(dx, 0, 0)) || !simFitsAt(from.offset(0, 0, dz))) {
+				return;
 			}
 		}
 

@@ -259,6 +259,12 @@ public final class BotSettings {
 	public static final float MAX_FORWARD_ANGLE = 90.0f;
 
 	/**
+	 * Sprinting needs somewhere to sprint to. Below this many nodes remaining the bot walks, which
+	 * stops it charging past the final node and having to double back.
+	 */
+	public static final int MIN_STEPS_FOR_SPRINT = 3;
+
+	/**
 	 * Distance from the route at which the plan is abandoned outright and replanned.
 	 *
 	 * <p>Measured to <em>either end</em> of the movement being executed, so being partway along it is
@@ -277,8 +283,15 @@ public final class BotSettings {
 	 */
 	public static final double PATH_DRIFT_DISTANCE = 2.0;
 
-	/** Ticks the bot may spend drifting off the route before the plan is abandoned. */
-	public static final int MAX_TICKS_OFF_PATH = 200;
+	/**
+	 * Ticks the bot may spend drifting off the route before the plan is abandoned.
+	 *
+	 * <p>Baritone's value is 200. That is far too patient here: Baritone catches a failing movement
+	 * separately through its per-movement state machines, so the drift counter is a last resort, while
+	 * for us it <em>is</em> the detector. At 200 the bot ground against a corner for ten seconds before
+	 * trying anything else.</p>
+	 */
+	public static final int MAX_TICKS_OFF_PATH = 20;
 
 	// ---------------------------------------------------------------- parkour
 
