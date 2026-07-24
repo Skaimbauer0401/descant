@@ -9,6 +9,7 @@ import mcbot.client.BotSettings;
 import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
+import mcbot.client.action.ChestDeposit;
 import mcbot.client.action.CombatAction;
 import mcbot.client.action.DoorOpener;
 import mcbot.client.action.EatAction;
@@ -71,6 +72,8 @@ public final class BotController {
 		FIGHTING,
 		/** Breaking the block we came to mine, having arrived beside it. */
 		MINING,
+		/** Emptying the haul into the remembered chest. */
+		DEPOSITING,
 		/** Walking over the drops left by a broken block. */
 		COLLECTING,
 		SUCCEEDED,
@@ -92,6 +95,7 @@ public final class BotController {
 	private final DoorOpener doorOpener = new DoorOpener();
 	private final EatAction eater = new EatAction();
 	private final CombatAction combat = new CombatAction();
+	private final ChestDeposit depositor = new ChestDeposit();
 	private final WaterBucketClutch clutch = new WaterBucketClutch();
 	private final Consumer<Component> messageSink;
 
@@ -136,6 +140,17 @@ public final class BotController {
 
 	/** Ticks spent sweeping up loot, for the grace period and the give-up timeout. */
 	private int collectTicks;
+
+	/**
+	 * Chest to bank the haul in, or {@code null} when banking is off. Set with {@code /mcbot chest}.
+	 */
+	private BlockPos depositChest;
+
+	/** Task parked while the bot runs a deposit errand, restored when it gets back. */
+	private Goal parkedGoal;
+	private BlockPos parkedMineTarget;
+	private Block parkedMineTargetBlock;
+	private boolean depositing;
 
 	/** Sweeping up loot: the goal points at a drop rather than at the journey's destination. */
 	private boolean collecting;
@@ -490,7 +505,8 @@ public final class BotController {
 				|| status == Status.COLLECTING
 				|| status == Status.CLUTCHING
 				|| status == Status.EATING
-				|| status == Status.FIGHTING;
+				|| status == Status.FIGHTING
+				|| status == Status.DEPOSITING;
 	}
 
 	public BotInput input() {
@@ -568,6 +584,7 @@ public final class BotController {
 			case BREAKING, MINING -> "mining";
 			case PLACING -> "building";
 			case COLLECTING -> "collecting";
+			case DEPOSITING -> "depositing";
 			case EATING -> "eating";
 			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
 			case CLUTCHING -> "clutching";
@@ -630,6 +647,13 @@ public final class BotController {
 			return;
 		}
 
+		// Inventory full? Bank it before carrying on. Checked after survival, so a fight or a fall is
+		// never interrupted by an errand, and before arrival so it cannot be skipped by reaching the
+		// goal on the same tick.
+		if (beginDepositIfFull(minecraft, player)) {
+			return;
+		}
+
 		// Building gets switched off when the bot runs dry. Nothing used to switch it back on, so
 		// one shortage disabled bridging for the rest of the journey however many blocks were
 		// picked up afterwards. Restore it the moment we are carrying something usable again.
@@ -660,6 +684,7 @@ public final class BotController {
 			case PLACING -> tickPlacing(minecraft, player);
 			case MINING -> tickMining(minecraft, player);
 			case COLLECTING -> tickCollecting(minecraft, player);
+			case DEPOSITING -> tickDepositing(minecraft, player);
 			default -> {
 			}
 		}
@@ -837,6 +862,96 @@ public final class BotController {
 
 		input.forward(true);
 		input.jump(target.y > player.getY() + 0.2);
+	}
+
+	// ---------------------------------------------------------------- banking the haul
+
+	/** Remembers a chest to empty the haul into, or clears it when {@code chest} is {@code null}. */
+	public void setDepositChest(BlockPos chest) {
+		this.depositChest = chest == null ? null : chest.immutable();
+	}
+
+	public BlockPos depositChest() {
+		return depositChest;
+	}
+
+	/** The chest being emptied right now, or {@code null}. For the in-world display. */
+	public BlockPos activeDepositTarget() {
+		return depositor.target();
+	}
+
+	/**
+	 * Breaks off to bank the haul when the inventory has filled up, parking whatever we were doing.
+	 *
+	 * <p>Without this a mining run quietly stops being productive: the bot keeps breaking blocks whose
+	 * drops it can no longer pick up, and the longer it runs the less it has to show for it. The task
+	 * is parked rather than abandoned, so the trip is an interruption and not an ending.</p>
+	 *
+	 * @return whether a deposit trip was started
+	 */
+	private boolean beginDepositIfFull(Minecraft minecraft, LocalPlayer player) {
+		if (depositChest == null || depositing || collecting) {
+			return false; // no chest set, already going, or mid-sweep — finish that first
+		}
+		// Only interrupt real work. A plain journey should reach where it was sent, full or not.
+		if (mineTarget == null && huntedEntity == null) {
+			return false;
+		}
+		if (InventoryManager.fullness(player) < BotSettings.DEPOSIT_FULLNESS
+				|| !InventoryManager.hasHaul(player)) {
+			return false;
+		}
+
+		depositing = true;
+		parkedGoal = goal;
+		parkedMineTarget = mineTarget;
+		parkedMineTargetBlock = mineTargetBlock;
+		mineTarget = null;
+		mineTargetBlock = null;
+
+		// Stand next to the chest, not on it. Anywhere within arm's reach will do.
+		goal = new GoalNear(depositChest, (int) BotSettings.REACH - 1);
+		message("Inventory full — banking the haul at " + format(depositChest) + ".");
+		replan(minecraft);
+		return true;
+	}
+
+	private void tickDepositing(Minecraft minecraft, LocalPlayer player) {
+		switch (depositor.tick(minecraft, player)) {
+			case WORKING -> {
+				// keep transferring
+			}
+			case DONE -> finishDeposit(minecraft, true);
+			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
+				depositor.cancel(minecraft);
+				// Could not reach or open it. Give up on banking rather than stalling the whole task —
+				// a chest that has been broken or walled in must not end the mining run.
+				message("Couldn't use the chest — carrying on without banking.");
+				depositChest = null;
+				finishDeposit(minecraft, false);
+			}
+		}
+	}
+
+	/** Restores the task the deposit trip interrupted. */
+	private void finishDeposit(Minecraft minecraft, boolean banked) {
+		if (banked) {
+			message("Haul banked.");
+		}
+		depositing = false;
+		goal = parkedGoal;
+		mineTarget = parkedMineTarget;
+		mineTargetBlock = parkedMineTargetBlock;
+		parkedGoal = null;
+		parkedMineTarget = null;
+		parkedMineTargetBlock = null;
+
+		if (goal == null) {
+			// Nothing to go back to — the hunt will pick its own next target.
+			continueHunt(minecraft);
+			return;
+		}
+		replan(minecraft);
 	}
 
 	private void tickClutch(Minecraft minecraft, LocalPlayer player) {
@@ -1847,6 +1962,9 @@ public final class BotController {
 		}
 		placer.cancel();
 		doorOpener.reset();
+		if (minecraft != null) {
+			depositor.cancel(minecraft);
+		}
 	}
 
 	/**
@@ -1872,6 +1990,16 @@ public final class BotController {
 	}
 
 	private void succeed(Minecraft minecraft) {
+		// Arrived at the chest on a banking trip. This has to come first: the parked task is still
+		// sitting in mineTarget/goal, and any branch below would treat reaching the chest as having
+		// finished that instead.
+		if (depositing && minecraft.player != null) {
+			resetPlan(minecraft);
+			depositor.begin(depositChest, InventoryManager::isHaul);
+			status = Status.DEPOSITING;
+			return;
+		}
+
 		// Finishing a fetch detour is not finishing the journey: pick the real goal back up.
 		if (resumeGoal != null) {
 			goal = resumeGoal;

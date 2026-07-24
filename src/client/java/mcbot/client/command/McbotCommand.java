@@ -10,7 +10,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 
+import mcbot.client.BotSettings;
 import mcbot.client.control.BotController;
+import mcbot.client.path.BlockSearcher;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalBlock;
 import mcbot.client.path.goal.GoalXZ;
@@ -27,7 +29,9 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 
 /**
  * The whole command surface, under a single {@code /mcbot} root.
@@ -41,6 +45,7 @@ import net.minecraft.world.level.block.Blocks;
  *                                          or kill it, sweep up the drops and move on to the
  *                                          next; the default is false, which simply travels
  *                                          there once
+ *   /mcbot chest [off]             remember the nearest chest to bank the haul in, or forget it
  *   /mcbot stop | status | path | clutch
  * </pre>
  *
@@ -75,6 +80,9 @@ public final class McbotCommand {
 												BuiltInRegistries.ENTITY_TYPE.keySet().stream()),
 										builder))
 								.executes(this::find)))
+				.then(ClientCommands.literal("chest")
+						.executes(this::rememberChest)
+						.then(ClientCommands.literal("off").executes(this::forgetChest)))
 				.then(ClientCommands.literal("stop").executes(this::stop))
 				.then(ClientCommands.literal("status").executes(this::status))
 				.then(ClientCommands.literal("path").executes(this::togglePath))
@@ -145,6 +153,46 @@ public final class McbotCommand {
 		feedback(context, "Heading to " + goal.describe()
 				+ (allowBuilding ? "." : " (movement only).")
 				+ " Press any movement key to cancel.");
+		return 1;
+	}
+
+	// ---------------------------------------------------------------- banking
+
+	/**
+	 * Remembers the nearest container as the place to bank the haul.
+	 *
+	 * <p>Nearest-to-the-player rather than a typed coordinate: you set it by standing next to the
+	 * chest you mean, which is both quicker and harder to get wrong than reading three numbers off the
+	 * debug screen.</p>
+	 */
+	private int rememberChest(CommandContext<FabricClientCommandSource> context) {
+		Minecraft minecraft = context.getSource().getClient();
+		LocalPlayer player = minecraft.player;
+		if (player == null || minecraft.level == null) {
+			return 0;
+		}
+
+		BlockPos found = BlockSearcher.findNearest(
+				minecraft.level,
+				BlockPos.containing(player.position()),
+				BotSettings.CHEST_SEARCH_RADIUS,
+				state -> state.getBlock() instanceof ChestBlock
+						|| state.getBlock() instanceof BarrelBlock);
+
+		if (found == null) {
+			feedback(context, "No chest or barrel within " + BotSettings.CHEST_SEARCH_RADIUS
+					+ " blocks. Stand nearer to one.");
+			return 0;
+		}
+		controller.setDepositChest(found);
+		feedback(context, "Banking the haul at " + found.getX() + ", " + found.getY() + ", "
+				+ found.getZ() + " once the inventory fills up.");
+		return 1;
+	}
+
+	private int forgetChest(CommandContext<FabricClientCommandSource> context) {
+		controller.setDepositChest(null);
+		feedback(context, "Banking off — the bot will keep everything it mines.");
 		return 1;
 	}
 

@@ -371,4 +371,41 @@ public final class InventoryManager {
 	public static boolean hasEdibleFood(LocalPlayer player) {
 		return has(player, stack -> isFood(stack) && !isEmergencyFood(stack));
 	}
+
+	/**
+	 * Whether this stack is worth banking in a chest rather than carrying on with.
+	 *
+	 * <p>The keep-list is everything the bot needs to keep <em>working</em>: tools and weapons, food,
+	 * the water bucket, and scaffolding to bridge with. Everything else is haul. Getting this wrong in
+	 * the generous direction is the expensive mistake — deposit the pickaxe and the mining run is over,
+	 * whereas keeping a few stacks of cobble merely wastes some space.</p>
+	 */
+	public static boolean isHaul(ItemStack stack) {
+		if (stack.isEmpty()) {
+			return false;
+		}
+		if (isFood(stack) || isBuildingBlock(stack) || stack.is(Items.WATER_BUCKET)) {
+			return false;
+		}
+		return !stack.isDamageableItem(); // tools and weapons are the damageable things we carry
+	}
+
+	/** Fraction of the main inventory currently occupied, ignoring armour and the off-hand. */
+	public static double fullness(LocalPlayer player) {
+		Inventory inventory = player.getInventory();
+		int used = 0;
+		int total = 0;
+		for (int slot = 0; slot < inventory.getNonEquipmentItems().size(); slot++) {
+			total++;
+			if (!inventory.getItem(slot).isEmpty()) {
+				used++;
+			}
+		}
+		return total == 0 ? 0.0 : (double) used / total;
+	}
+
+	/** Whether the bot is carrying anything worth a trip to a chest. */
+	public static boolean hasHaul(LocalPlayer player) {
+		return has(player, InventoryManager::isHaul);
+	}
 }

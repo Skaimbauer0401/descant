@@ -196,6 +196,18 @@ public final class BotSettings {
 	/** How closely the player must sit to the middle of a column before pillaring upward. */
 	public static final double PILLAR_CENTRE_TOLERANCE = 0.18;
 
+	/**
+	 * Fraction of the inventory that must be occupied before the bot breaks off to bank the haul.
+	 *
+	 * <p>Not 1.0 deliberately. Waiting for the very last slot means the trip only starts once drops are
+	 * already being left on the ground, and a stack that partially merges can fill the remainder in a
+	 * single block break. Leaving a few slots spare covers the walk back to the chest.</p>
+	 */
+	public static final double DEPOSIT_FULLNESS = 0.85;
+
+	/** How far around the player {@code /mcbot chest} looks for a container to remember. */
+	public static final int CHEST_SEARCH_RADIUS = 16;
+
 	/** Radius searched for dropped items when the bot runs out of something it needs. */
 	public static final double ITEM_SEARCH_RADIUS = 50.0;
 
