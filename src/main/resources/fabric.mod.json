@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "mcbot",
+  "version": "${version}",
+  "name": "mcbot",
+  "description": "Client-side automatic movement bot. Pathfinds to given coordinates, mining and bridging as needed.",
+  "authors": [
+    "Skaimbauer"
+  ],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "mcbot.client.McbotDataGenerator"
+    ],
+    "client": [
+      "mcbot.client.McbotClient"
+    ],
+    "main": [
+      "mcbot.Mcbot"
+    ]
+  },
+  "mixins": [
+    "mcbot.mixins.json",
+    {
+      "config": "mcbot.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
