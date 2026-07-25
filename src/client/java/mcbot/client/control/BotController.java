@@ -13,7 +13,6 @@ import mcbot.client.action.ChestDeposit;
 import mcbot.client.action.CombatAction;
 import mcbot.client.action.DoorOpener;
 import mcbot.client.action.EatAction;
-import mcbot.client.action.WaterBucketClutch;
 import mcbot.client.inventory.InventoryManager;
 import mcbot.client.inventory.ItemScanner;
 import mcbot.client.path.AirFinder;
@@ -66,7 +65,6 @@ public final class BotController {
 		FOLLOWING,
 		BREAKING,
 		PLACING,
-		CLUTCHING,
 		EATING,
 		/** Defending against a hostile that got too close. */
 		FIGHTING,
@@ -96,7 +94,6 @@ public final class BotController {
 	private final EatAction eater = new EatAction();
 	private final CombatAction combat = new CombatAction();
 	private final ChestDeposit depositor = new ChestDeposit();
-	private final WaterBucketClutch clutch = new WaterBucketClutch();
 	private final Consumer<Component> messageSink;
 
 	private Status status = Status.IDLE;
@@ -500,7 +497,6 @@ public final class BotController {
 				|| status == Status.PLACING
 				|| status == Status.MINING
 				|| status == Status.COLLECTING
-				|| status == Status.CLUTCHING
 				|| status == Status.EATING
 				|| status == Status.FIGHTING
 				|| status == Status.DEPOSITING;
@@ -574,7 +570,6 @@ public final class BotController {
 			case DEPOSITING -> "depositing";
 			case EATING -> "eating";
 			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
-			case CLUTCHING -> "clutching";
 			case SUCCEEDED -> "done";
 			case FAILED -> "failed";
 			case IDLE -> "idle";
@@ -692,30 +687,14 @@ public final class BotController {
 	 * @return {@code true} when survival took over this tick and the route should not be driven
 	 */
 	private boolean tickSurvival(Minecraft minecraft, LocalPlayer player) {
-		// 1. The ground rushing up. Nothing else matters for the next few ticks.
-		if (status == Status.CLUTCHING) {
-			tickClutch(minecraft, player);
-			return true;
-		}
-		if (BotSettings.CLUTCH_ENABLED.get() && WaterBucketClutch.isNeeded(minecraft, player)) {
-			// Drop any held-use interaction before the clutch equips the bucket — a raised shield or an
-			// eat still holding the use key would fire the bucket the instant it reaches the main hand,
-			// dumping the water mid-air and wasting the clutch.
-			releaseInteractions(minecraft, player);
-			clutch.begin();
-			status = Status.CLUTCHING;
-			tickClutch(minecraft, player);
-			return true;
-		}
-
-		// 2. Running out of air.
+		// 1. Running out of air.
 		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL.get()) {
 			releaseInteractions(minecraft, player); // same reason: nothing held while surfacing
 			swimForAir(minecraft, player);
 			return true;
 		}
 
-		// 3. Something hostile within arm's reach. A threat owns the whole tick: fighting and stopping
+		// 2. Something hostile within arm's reach. A threat owns the whole tick: fighting and stopping
 		// to eat are mutually exclusive, and arbitrating them every tick off a health threshold that
 		// jitters as hits land is exactly what made the bot dither — shield half-raised from an
 		// abandoned eat while it stood there deciding. So a threat first cancels any eat in progress
@@ -746,7 +725,7 @@ public final class BotController {
 			status = Status.FOLLOWING;
 		}
 
-		// 4. Hunger and healing. Only reached when nothing hostile is near, so eating never overlaps a
+		// 3. Hunger and healing. Only reached when nothing hostile is near, so eating never overlaps a
 		// fight. Only worth stopping for between path actions, never mid-mine.
 		if (status == Status.EATING) {
 			tickEating(minecraft, player);
@@ -793,9 +772,8 @@ public final class BotController {
 	 *
 	 * <p>Both {@link EatAction} and {@link CombatAction} keep {@code keyUse} pressed across ticks, so
 	 * whenever a higher-priority behaviour takes the tick from them it must call this first. Otherwise
-	 * the key stays held and drives whatever reaches the main hand next — most damagingly a water
-	 * bucket during a clutch. Both cancels are idempotent, so calling it when nothing is held is
-	 * harmless.</p>
+	 * the key stays held and drives whatever reaches the main hand next. Both cancels are idempotent,
+	 * so calling it when nothing is held is harmless.</p>
 	 */
 	private void releaseInteractions(Minecraft minecraft, LocalPlayer player) {
 		eater.cancel(minecraft);
@@ -939,22 +917,6 @@ public final class BotController {
 			return;
 		}
 		replan(minecraft);
-	}
-
-	private void tickClutch(Minecraft minecraft, LocalPlayer player) {
-		switch (clutch.tick(minecraft, player, input)) {
-			case WORKING -> {
-				// keep falling, keep aiming down
-			}
-			case DONE -> {
-				// Landed. Replan: we are almost certainly not where the old path expected.
-				replan(minecraft);
-			}
-			case NO_MATERIAL, FAILED -> {
-				clutch.cancel();
-				replan(minecraft);
-			}
-		}
 	}
 
 	private void tickPlanning(Minecraft minecraft, LocalPlayer player) {
@@ -1146,7 +1108,6 @@ public final class BotController {
 				InventoryManager.snapshot(player),
 				allowBreak,
 				allowPlace,
-				BotSettings.CLUTCH_ENABLED.get() && InventoryManager.hasWaterBucket(player),
 				allowParkour,
 				favoured);
 	}

@@ -187,59 +187,7 @@ public final class BotSettings {
 	public static final IntSetting MAX_FALL_SCAN = new IntSetting("maxFallScan", 20,
 			"How far down to look for ground beneath a candidate step.");
 
-	/**
-	 * Extra cost for a drop needing a water-bucket clutch. Deliberately enormous: a clutch is an
-	 * escape hatch, not a travel technique. At this price the bot will happily bridge a gap fifteen
-	 * blocks wide rather than drop down it, and only takes the fall when there is no route at all.
-	 */
-	public static final DoubleSetting CLUTCH_COST = new DoubleSetting("clutchCost", 400.0,
-			"Ticks charged for a drop that needs a water-bucket clutch. Huge on purpose — a clutch is a last resort.");
-
-	/** Deepest drop the bot will take even with a bucket, as a sanity limit. */
-	public static final IntSetting MAX_CLUTCH_FALL = new IntSetting("maxClutchFall", 80,
-			"Deepest fall the bot will take even with a water bucket in hand.");
-
 	// ---------------------------------------------------------------- survival
-
-	/** Downward speed (blocks/tick) past which a fall is considered committed. */
-	public static final DoubleSetting CLUTCH_MIN_FALL_SPEED = new DoubleSetting(
-			"clutchMinFallSpeed", 0.5,
-			"Downward speed in blocks per tick past which a fall counts as committed.");
-
-	/**
-	 * Blocks the player must have already fallen before a clutch is even considered.
-	 *
-	 * <p>Without this the clutch fires during ordinary hops — a pillar jump drops a quarter of a
-	 * block on the way back down, and a mis-timed ground raycast past the edge of a one-wide pillar
-	 * then reports a huge drop below. Requiring a real fall first makes the trigger unambiguous.</p>
-	 */
-	public static final DoubleSetting CLUTCH_MIN_FALL_DISTANCE = new DoubleSetting(
-			"clutchMinFallDistance", 2.5,
-			"Blocks the bot must already have fallen before a clutch is considered, so ordinary hops never trigger one.");
-
-	/**
-	 * Blocks of predicted fall <em>beyond</em> the safe limit before a clutch is worth it.
-	 *
-	 * <p>Without a margin the trigger fires on ordinary safe descents: at 2.6 blocks fallen with
-	 * 0.6 still to go, the total just tips past three and the bot dumps water on a landing it would
-	 * have walked away from.</p>
-	 */
-	public static final DoubleSetting CLUTCH_DAMAGE_MARGIN = new DoubleSetting(
-			"clutchDamageMargin", 2.0,
-			"Blocks past the safe fall distance before a clutch is worth spending a bucket on.");
-
-	/** Minimum remaining drop for a clutch to be worth starting — below this there is no time. */
-	public static final DoubleSetting CLUTCH_MIN_REMAINING_DROP = new DoubleSetting(
-			"clutchMinRemainingDrop", 2.0,
-			"Least remaining drop in which a clutch can still be placed in time.");
-
-	/**
-	 * Height above the ground at which the clutch water goes down. Far enough that the placement
-	 * has landed before impact, close enough that the bot cannot drift out of its own water.
-	 */
-	public static final DoubleSetting CLUTCH_TRIGGER_DISTANCE = new DoubleSetting(
-			"clutchTriggerDistance", 4.5,
-			"Height above the ground at which the clutch water is placed.");
 
 	/** How closely the player must sit to the middle of a column before pillaring upward. */
 	public static final DoubleSetting PILLAR_CENTRE_TOLERANCE = new DoubleSetting(
@@ -257,15 +205,6 @@ public final class BotSettings {
 	/** Blocks the bot may mine through in a single move (e.g. head + feet of a wall). */
 	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 2, 0, 6,
 			"Blocks the bot may mine through in one movement. 0 stops it tunnelling at all.");
-
-	/**
-	 * Whether the bot may save a long fall with a water bucket.
-	 *
-	 * <p>Off by default, and deliberately so: a clutch overrides the route and dumps a water source
-	 * into the world, which is a side effect nobody asked for. It has to be opted into.</p>
-	 */
-	public static final BooleanSetting CLUTCH_ENABLED = new BooleanSetting("clutchEnabled", false,
-			"Whether the bot saves long falls with a water bucket. Off by default — it places water in the world.");
 
 	// ---------------------------------------------------------------- display
 

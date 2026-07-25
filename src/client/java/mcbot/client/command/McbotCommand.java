@@ -48,7 +48,7 @@ import net.minecraft.network.chat.Component;
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
  *   /mcbot api                     write the action menu out as JSON
- *   /mcbot stop | status | path | clutch
+ *   /mcbot stop | status | path
  * </pre>
  *
  * <p>This class only parses. Every command ends in a call to {@link BotApi}, and the sentence the
@@ -92,10 +92,7 @@ public final class McbotCommand {
 						.executes(context -> run(context, "status", Arguments.none())))
 				.then(ClientCommands.literal("path")
 						.executes(context -> run(context, "toggle",
-								Arguments.of("name", BotSettings.SHOW_PATH.name()))))
-				.then(ClientCommands.literal("clutch")
-						.executes(context -> run(context, "toggle",
-								Arguments.of("name", BotSettings.CLUTCH_ENABLED.name())))));
+								Arguments.of("name", BotSettings.SHOW_PATH.name())))));
 	}
 
 	// ---------------------------------------------------------------- travel

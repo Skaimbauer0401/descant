@@ -234,13 +234,6 @@ public final class InventoryManager {
 		return damage * Math.max(speed, 0.1);
 	}
 
-	public static boolean equipWaterBucket(Minecraft minecraft, LocalPlayer player) {
-		return equip(minecraft, player, stack -> stack.is(Items.WATER_BUCKET));
-	}
-
-	public static boolean hasWaterBucket(LocalPlayer player) {
-		return has(player, stack -> stack.is(Items.WATER_BUCKET));
-	}
 
 	// ---------------------------------------------------------------- predicates
 
@@ -376,9 +369,13 @@ public final class InventoryManager {
 	 * Whether this stack is worth banking in a chest rather than carrying on with.
 	 *
 	 * <p>The keep-list is everything the bot needs to keep <em>working</em>: tools and weapons, food,
-	 * the water bucket, and scaffolding to bridge with. Everything else is haul. Getting this wrong in
-	 * the generous direction is the expensive mistake — deposit the pickaxe and the mining run is over,
-	 * whereas keeping a few stacks of cobble merely wastes some space.</p>
+	 * and scaffolding to bridge with. Everything else is haul. Getting this wrong in the generous
+	 * direction is the expensive mistake — deposit the pickaxe and the mining run is over, whereas
+	 * keeping a few stacks of cobble merely wastes some space.</p>
+	 *
+	 * <p>A water bucket is kept too, though the bot no longer has any use for one itself. It is a
+	 * utility a player carries on purpose, and quietly banking it would be a worse surprise than the
+	 * slot is worth.</p>
 	 */
 	public static boolean isHaul(ItemStack stack) {
 		if (stack.isEmpty()) {

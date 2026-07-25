@@ -14,7 +14,7 @@ import mcbot.client.settings.SettingRegistry;
 /**
  * Flips an on/off setting to whichever it currently is not.
  *
- * <p>Exists for the chat commands, where {@code /mcbot clutch} has always meant "the other one" and
+ * <p>Exists for the chat commands, where {@code /mcbot path} has always meant "the other one" and
  * having to know the current state first would be a step backwards. A model is better served by
  * {@code set}, where it says what it wants rather than what it wants changed — but the two share the
  * same settings, so neither can surprise the other.</p>

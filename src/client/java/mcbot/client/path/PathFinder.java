@@ -80,7 +80,6 @@ public final class PathFinder {
 	private final List<ItemStack> tools;
 	private final boolean allowBreak;
 	private final boolean allowPlace;
-	private final boolean canClutch;
 	private final boolean allowParkour;
 
 	private final Map<Long, Node> nodes = new HashMap<>();
@@ -119,14 +118,13 @@ public final class PathFinder {
 	 *                 set for a fresh journey
 	 */
 	public PathFinder(WorldView world, BlockPos start, Goal goal, List<ItemStack> tools,
-			boolean allowBreak, boolean allowPlace, boolean canClutch, boolean allowParkour,
+			boolean allowBreak, boolean allowPlace, boolean allowParkour,
 			Set<Long> favoured) {
 		this.world = world;
 		this.goal = goal;
 		this.tools = tools;
 		this.allowBreak = allowBreak;
 		this.allowPlace = allowPlace;
-		this.canClutch = canClutch;
 		this.allowParkour = allowParkour;
 		this.favoured = favoured;
 
@@ -679,11 +677,7 @@ public final class PathFinder {
 
 	/** Walking off a ledge: find where we would land, and refuse drops that would hurt. */
 	private void tryDescend(Node node, BlockPos target, double baseCost) {
-		int scanLimit = canClutch
-				? Math.max(BotSettings.MAX_FALL_SCAN.get(), BotSettings.MAX_CLUTCH_FALL.get())
-				: BotSettings.MAX_FALL_SCAN.get();
-
-		for (int drop = 1; drop <= scanLimit; drop++) {
+		for (int drop = 1; drop <= BotSettings.MAX_FALL_SCAN.get(); drop++) {
 			BlockPos feet = target.below(drop);
 			if (!world.isKnown(feet) || !simPassable(feet)) {
 				return;
@@ -703,11 +697,9 @@ public final class PathFinder {
 				double fallCost = baseCost + drop * BotSettings.FALL_COST_PER_BLOCK.get();
 				if (drop <= BotSettings.SAFE_FALL_DISTANCE) {
 					add(node, feet, fallCost, NO_BREAK, null);
-				} else if (canClutch && drop <= BotSettings.MAX_CLUTCH_FALL.get()) {
-					// Survivable with a water bucket on the way down. Priced well above a walk so
-					// it stays a shortcut worth taking, never the casual default.
-					add(node, feet, fallCost + BotSettings.CLUTCH_COST.get(), NO_BREAK, null);
 				}
+				// Anything deeper hurts, and nothing in the bot's repertoire softens a landing, so the
+				// move is simply not generated — the search routes around the drop instead.
 				return; // ground found either way; deeper scanning is pointless
 			}
 		}
