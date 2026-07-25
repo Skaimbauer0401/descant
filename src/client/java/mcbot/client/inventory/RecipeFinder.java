@@ -10,6 +10,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.StackedItemContents;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.display.FurnaceRecipeDisplay;
 import net.minecraft.world.item.crafting.display.RecipeDisplay;
 import net.minecraft.world.item.crafting.display.RecipeDisplayEntry;
 import net.minecraft.world.item.crafting.display.RecipeDisplayId;
@@ -78,6 +79,30 @@ public final class RecipeFinder {
 		// the only one worth reporting first, and a model reads the head of a list.
 		matches.sort((a, b) -> Boolean.compare(b.craftable(), a.craftable()));
 		return matches;
+	}
+
+	/**
+	 * What {@code input} turns into in a furnace, or {@code null} if it does not smelt.
+	 *
+	 * <p>Checked before sending the bot anywhere. Walking to a furnace, loading it and standing there
+	 * for a minute only to find that cobblestone was never going to become anything is a slow way to
+	 * learn a fact the recipe book already knew.</p>
+	 */
+	public static ItemStack smeltResultFor(LocalPlayer player, Item input) {
+		ContextMap context = SlotDisplayContext.fromLevel(player.level());
+		for (RecipeCollection collection : player.getRecipeBook().getCollections()) {
+			for (RecipeDisplayEntry entry : collection.getRecipes()) {
+				if (!(entry.display() instanceof FurnaceRecipeDisplay furnace)) {
+					continue;
+				}
+				boolean takesIt = furnace.ingredient().resolveForStacks(context).stream()
+						.anyMatch(stack -> stack.is(input));
+				if (takesIt) {
+					return furnace.result().resolveForFirstStack(context);
+				}
+			}
+		}
+		return null;
 	}
 
 	/** Whether this item is produced by smelting rather than crafting, for a better refusal. */

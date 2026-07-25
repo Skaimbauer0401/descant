@@ -53,6 +53,7 @@ import net.minecraft.resources.Identifier;
  *   /mcbot locate &lt;block&gt;          report where the nearest one is, without moving
  *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
+ *   /mcbot smelt &lt;item&gt; [count]    run a furnace: find it, load it, wait, collect
  *   /mcbot use                     right-click whatever the bot is looking at
  *   /mcbot inventory | deposit     list what is carried; bank it now
  *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
@@ -112,6 +113,15 @@ public final class McbotCommand {
 										"item", StringArgumentType.getString(context, "item"))))
 								.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
 										.executes(context -> run(context, "craft", Arguments.of(
+												"item", StringArgumentType.getString(context, "item"),
+												"count", IntegerArgumentType.getInteger(context, "count")))))))
+				.then(ClientCommands.literal("smelt")
+						.then(ClientCommands.<String>argument("item", StringArgumentType.word())
+								.suggests(McbotCommand::suggestItems)
+								.executes(context -> run(context, "smelt", Arguments.of(
+										"item", StringArgumentType.getString(context, "item"))))
+								.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
+										.executes(context -> run(context, "smelt", Arguments.of(
 												"item", StringArgumentType.getString(context, "item"),
 												"count", IntegerArgumentType.getInteger(context, "count")))))))
 				.then(ClientCommands.literal("locate")

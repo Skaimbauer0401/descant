@@ -293,8 +293,12 @@ public final class AiAgent {
 				- craft makes things from what is carried. Small recipes happen where the bot \
 				stands; ones needing a 3x3 grid send it to a crafting table by itself. It \
 				cannot smelt — anything needing a furnace is out of reach for now.
+				- smelt runs a furnace: it finds one, loads the items, picks its own fuel, waits \
+				and collects the result. About 10 seconds per item, so ask for what you need \
+				rather than everything carried.
 				- use right-clicks a block: levers, buttons, doors, gates, beds. It will open a \
-				furnace or a smithing table but cannot put anything into one.
+				smithing table or an anvil but cannot put anything into one — smelting is the \
+				only station work the bot can do.
 				- deposit banks the haul on demand; drop throws things away for good. Prefer \
 				deposit whenever a chest is set.""";
 	}

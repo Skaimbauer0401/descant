@@ -11,6 +11,7 @@ import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
 import mcbot.client.action.ChestDeposit;
 import mcbot.client.action.Crafter;
+import mcbot.client.action.Smelter;
 import mcbot.client.action.CombatAction;
 import mcbot.client.action.DoorOpener;
 import mcbot.client.action.EatAction;
@@ -78,6 +79,8 @@ public final class BotController {
 		DEPOSITING,
 		/** Making something, in the inventory grid or at a bench. */
 		CRAFTING,
+		/** Working a furnace. */
+		SMELTING,
 		/** Walking over the drops left by a broken block. */
 		COLLECTING,
 		SUCCEEDED,
@@ -101,6 +104,7 @@ public final class BotController {
 	private final CombatAction combat = new CombatAction();
 	private final ChestDeposit depositor = new ChestDeposit();
 	private final Crafter crafter = new Crafter();
+	private final Smelter smelter = new Smelter();
 	private final Consumer<Component> messageSink;
 
 	private Status status = Status.IDLE;
@@ -195,6 +199,14 @@ public final class BotController {
 
 	/** A block to right-click on arrival — a lever, a door, a station to open. */
 	private BlockPos useTarget;
+
+	/** A pending smelt: the furnace to use, what goes in, what burns, and how much of each. */
+	private BlockPos smeltFurnace;
+	private Item smeltInput;
+	private Item smeltFuel;
+	private int smeltCount;
+	private int smeltFuelPieces;
+	private String smeltName = "";
 
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
 	private BlockPos mineTarget;
@@ -378,6 +390,61 @@ public final class BotController {
 			return;
 		}
 		navigateTo(approachPosition(minecraft, player, table), true, true);
+	}
+
+	/**
+	 * Smelts something in a furnace, walking there first if it is out of reach.
+	 *
+	 * @param fuelPieces how many pieces of fuel to load, worked out from the fuel's burn time
+	 */
+	public void smelt(Minecraft minecraft, LocalPlayer player, BlockPos furnace, Item input,
+			Item fuel, int count, int fuelPieces, String name) {
+		this.smeltFurnace = furnace.immutable();
+		this.smeltInput = input;
+		this.smeltFuel = fuel;
+		this.smeltCount = count;
+		this.smeltFuelPieces = fuelPieces;
+		this.smeltName = name;
+
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(furnace)) <= BotSettings.REACH.get()) {
+			resetPlan(minecraft);
+			smelter.begin(furnace, input, fuel, count, fuelPieces);
+			status = Status.SMELTING;
+			return;
+		}
+		navigateTo(approachPosition(minecraft, player, furnace), true, true);
+	}
+
+	private void tickSmelting(Minecraft minecraft, LocalPlayer player) {
+		switch (smelter.tick(minecraft, player)) {
+			case WORKING -> {
+				// wait for it to burn
+			}
+			case DONE -> finishSmelting(minecraft, "Smelted " + smeltCount + " " + smeltName + ".");
+			case OUT_OF_RANGE -> {
+				smelter.cancel(minecraft);
+				replan(minecraft); // walk back into reach and pick it up again
+			}
+			case NO_MATERIAL -> {
+				smelter.cancel(minecraft);
+				finishSmelting(minecraft, "The furnace stopped — out of fuel, or " + smeltName
+						+ " cannot be smelted.");
+			}
+			case FAILED -> {
+				smelter.cancel(minecraft);
+				finishSmelting(minecraft, "Couldn't work the furnace.");
+			}
+		}
+	}
+
+	private void finishSmelting(Minecraft minecraft, String reason) {
+		smeltFurnace = null;
+		smeltInput = null;
+		smeltFuel = null;
+		resetPlan(minecraft);
+		status = Status.SUCCEEDED;
+		input.clear();
+		message(reason);
 	}
 
 	/** Right-clicks a block, walking to it first if it is out of reach. */
@@ -619,7 +686,12 @@ public final class BotController {
 	 * @return whether that was the last one needed
 	 */
 	private boolean countBrokenBlock() {
-		boolean wanted = huntExecute && huntedBlock != null && breakingBlock == huntedBlock;
+		// Stop counting the moment the quota is met. Between filling it and the hunt actually ending
+		// there is a whole loot sweep, and the route to the drops may well cut through another of the
+		// same block — which is how "six oak logs" reported seven: the sweep mined one more and the
+		// tally was still listening. The extra block is ordinary path clearing, not part of the order.
+		boolean wanted = huntExecute && huntedBlock != null && breakingBlock == huntedBlock
+				&& !huntReached;
 		breakingBlock = null;
 		return wanted && tallyOne();
 	}
@@ -740,6 +812,7 @@ public final class BotController {
 		buildItem = null;
 		craftRecipe = null;
 		craftTable = null;
+		smeltFurnace = null;
 		useTarget = null;
 		mineTarget = null;
 		mineTargetBlock = null;
@@ -755,6 +828,7 @@ public final class BotController {
 				|| status == Status.PLACING
 				|| status == Status.MINING
 				|| status == Status.CRAFTING
+				|| status == Status.SMELTING
 				|| status == Status.COLLECTING
 				|| status == Status.EATING
 				|| status == Status.FIGHTING
@@ -828,6 +902,7 @@ public final class BotController {
 			case COLLECTING -> "collecting";
 			case DEPOSITING -> "depositing";
 			case CRAFTING -> "crafting";
+			case SMELTING -> "smelting";
 			case EATING -> "eating";
 			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
 			case SUCCEEDED -> "done";
@@ -928,6 +1003,7 @@ public final class BotController {
 			case COLLECTING -> tickCollecting(minecraft, player);
 			case DEPOSITING -> tickDepositing(minecraft, player);
 			case CRAFTING -> tickCrafting(minecraft, player);
+			case SMELTING -> tickSmelting(minecraft, player);
 			default -> {
 			}
 		}
@@ -1825,7 +1901,7 @@ public final class BotController {
 			// Asked for a number and got it. Announced separately from running out, because "got the
 			// twenty you wanted" and "there are none left anywhere" are very different outcomes and
 			// the difference decides what to do next.
-			message("Got " + huntTally + " " + name + " — that's what you asked for.");
+			message("Got the " + huntTally + " " + name + " you asked for.");
 			huntReached = false;
 			huntQuota = 0;
 			resetPlan(minecraft);
@@ -2257,6 +2333,7 @@ public final class BotController {
 		if (minecraft != null) {
 			depositor.cancel(minecraft);
 			crafter.cancel(minecraft);
+			smelter.cancel(minecraft);
 		}
 	}
 
@@ -2315,6 +2392,14 @@ public final class BotController {
 		if (huntedEntity != null && huntedEntity.isAlive()) {
 			goal = new GoalBlock(BlockPos.containing(huntedEntity.position()));
 			replan(minecraft);
+			return;
+		}
+
+		// Arrived at the furnace we came to work.
+		if (smeltFurnace != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			smelter.begin(smeltFurnace, smeltInput, smeltFuel, smeltCount, smeltFuelPieces);
+			status = Status.SMELTING;
 			return;
 		}
 
