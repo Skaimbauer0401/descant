@@ -35,7 +35,13 @@ public final class FindAction implements Action {
 				+ "kills it), picks up the drops and moves on to the next one — this is how you gather a "
 				+ "resource. Give a count to stop after that many; without one it keeps going until "
 				+ "there are none left in range, which for a common block may be thousands of them. "
-				+ "With execute=false it simply travels there once and stops.";
+				+ "With execute=false it simply travels there once and stops. "
+				+ "BE AWARE this is blunt about how it gets there: it takes the shortest route to the "
+				+ "nearest one and tunnels through whatever is in the way, including digging straight "
+				+ "down. It will not mine into lava it can see, or take a killing fall, but it will "
+				+ "gladly bore a hole through a build, break into a cave full of mobs, or spend a long "
+				+ "time underground. There is no movement-only version — find always breaks and places. "
+				+ "If any of that would matter, check the surroundings with look or locate first.";
 	}
 
 	@Override

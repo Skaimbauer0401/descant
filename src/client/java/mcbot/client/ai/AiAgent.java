@@ -265,11 +265,22 @@ public final class AiAgent {
 				different; calling it again unchanged will fail again.
 				- When the task is done, or you cannot make progress, reply in plain words with no \
 				function call. That ends the run.
+				- STOP AND WARN, calling nothing, if you are about to gather or dig while \
+				health is under 10 or hunger is under 6. Say which it is and what you were \
+				going to do. Gathering means tunnelling underground for a long time, and \
+				starting it hurt or hungry is how a bot dies. Wait to be told to go ahead.
 
 				About the world:
 				- Coordinates are x (east), z (south) and y (height). Sea level is about y=63.
 				- For travelling, use goto with x and z and no y. Naming a height means guessing \
 				the terrain and the bot will tunnel or pillar to reach your number.
+				- find and mine are BLUNT about how they reach a target. The bot takes the \
+				shortest route and tunnels through whatever is in the way, including \
+				digging straight down. It will not dig into lava it can see, or take a \
+				killing fall, but it will bore a hole through a build, break into a cave \
+				full of mobs, and stay underground a long time. There is no movement-only \
+				mode for gathering. If the player might mind a hole through their base, or \
+				the bot is hurt or short of food, say so before starting rather than after.
 				- To gather a resource, use find with execute=true, and ALWAYS give a count \
 				unless the player really did ask for all of them. One call gathers the whole \
 				amount, picking up the drops as it goes — you never call it once per block. \
