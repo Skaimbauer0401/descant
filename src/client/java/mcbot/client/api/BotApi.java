@@ -2,9 +2,14 @@ package mcbot.client.api;
 
 import mcbot.client.BotSettings;
 import mcbot.client.api.actions.ChestAction;
+import mcbot.client.api.actions.DepositAction;
+import mcbot.client.api.actions.DropAction;
+import mcbot.client.api.actions.EquipAction;
 import mcbot.client.api.actions.FindAction;
 import mcbot.client.api.actions.GotoAction;
 import mcbot.client.api.actions.GotoLevelAction;
+import mcbot.client.api.actions.InventoryAction;
+import mcbot.client.api.actions.PlaceAction;
 import mcbot.client.api.actions.SetAction;
 import mcbot.client.api.actions.StatusAction;
 import mcbot.client.api.actions.StopAction;
@@ -41,6 +46,11 @@ public final class BotApi {
 		actions.register(new GotoLevelAction());
 		actions.register(new FindAction());
 		actions.register(new ChestAction());
+		actions.register(new PlaceAction());
+		actions.register(new InventoryAction());
+		actions.register(new EquipAction());
+		actions.register(new DropAction());
+		actions.register(new DepositAction());
 		actions.register(new StatusAction());
 		actions.register(new StopAction());
 		actions.register(new SetAction());

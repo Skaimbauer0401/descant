@@ -34,6 +34,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
@@ -152,6 +153,16 @@ public final class BotController {
 	 * loot that was the point of the exercise.</p>
 	 */
 	private boolean huntReached;
+
+	/**
+	 * A block asked for by name, to be placed on arrival, and the item to place.
+	 *
+	 * <p>Distinct from the placing the pathfinder does on its own. Route scaffolding is anonymous —
+	 * any spare block, anywhere the plan says — whereas this is one named item at one named spot, and
+	 * finishes the task rather than continuing a journey.</p>
+	 */
+	private BlockPos buildTarget;
+	private Item buildItem;
 
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
 	private BlockPos mineTarget;
@@ -288,6 +299,41 @@ public final class BotController {
 
 		message((execute ? "Mining " : "Heading to ") + displayName + " at " + format(found) + ".");
 		return true;
+	}
+
+	/**
+	 * Places one named block at one named spot, walking there first if need be.
+	 *
+	 * @return a sentence describing what will happen, or {@code null} if it cannot be done — in which
+	 *         case nothing has been started and the caller should say why itself
+	 */
+	public boolean buildAt(Minecraft minecraft, LocalPlayer player, BlockPos target, Item item) {
+		this.buildTarget = target.immutable();
+		this.buildItem = item;
+
+		// Already within arm's reach: no point planning a journey to where we are standing.
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()) {
+			resetPlan(minecraft);
+			placer.beginWith(buildTarget, item);
+			status = Status.PLACING;
+			return true;
+		}
+
+		// Otherwise treat it exactly like a block to be mined: stand somewhere within reach and act
+		// from there, letting the ordinary pathfinder work out how to get to that spot.
+		navigateTo(approachPosition(minecraft, player, target), true, true);
+		return true;
+	}
+
+	/** Clears a build task without placing anything. */
+	private void finishBuild(Minecraft minecraft, boolean placed, String reason) {
+		buildTarget = null;
+		buildItem = null;
+		placer.cancel();
+		resetPlan(minecraft);
+		status = placed ? Status.SUCCEEDED : Status.FAILED;
+		input.clear();
+		message(reason);
 	}
 
 	/**
@@ -545,6 +591,8 @@ public final class BotController {
 		huntQuota = 0;
 		huntTally = 0;
 		huntReached = false;
+		buildTarget = null;
+		buildItem = null;
 		mineTarget = null;
 		mineTargetBlock = null;
 		collecting = false;
@@ -929,6 +977,17 @@ public final class BotController {
 			return false;
 		}
 
+		beginDeposit(minecraft, "Inventory full — banking the haul at " + format(depositChest) + ".");
+		return true;
+	}
+
+	/**
+	 * Parks whatever is in progress and heads for the chest.
+	 *
+	 * <p>Shared by the automatic trip and the on-demand one, so that a deposit asked for by hand parks
+	 * and restores the current job exactly the way a full inventory does.</p>
+	 */
+	private void beginDeposit(Minecraft minecraft, String reason) {
 		depositing = true;
 		parkedGoal = goal;
 		parkedMineTarget = mineTarget;
@@ -938,9 +997,27 @@ public final class BotController {
 
 		// Stand next to the chest, not on it. Anywhere within arm's reach will do.
 		goal = new GoalNear(depositChest, (int) BotSettings.REACH.get() - 1);
-		message("Inventory full — banking the haul at " + format(depositChest) + ".");
+		message(reason);
 		replan(minecraft);
-		return true;
+	}
+
+	/**
+	 * Goes and banks the haul now, whether or not the inventory is full.
+	 *
+	 * @return why it cannot, or {@code null} once the trip has started
+	 */
+	public String depositNow(Minecraft minecraft, LocalPlayer player) {
+		if (depositChest == null) {
+			return "No chest set. Use chest to pick one first.";
+		}
+		if (depositing) {
+			return "Already on the way to the chest.";
+		}
+		if (!InventoryManager.hasHaul(player)) {
+			return "Nothing worth banking — it is all tools, food and building blocks.";
+		}
+		beginDeposit(minecraft, "Banking the haul at " + format(depositChest) + ".");
+		return null;
 	}
 
 	private void tickDepositing(Minecraft minecraft, LocalPlayer player) {
@@ -1619,17 +1696,36 @@ public final class BotController {
 
 	private void tickPlacing(Minecraft minecraft, LocalPlayer player) {
 		ActionState result = placer.tick(minecraft, player, input);
+
+		// Scaffolding on the way somewhere, or the whole point of the trip? The two want opposite
+		// things from every outcome below: one carries on walking, the other is finished.
+		boolean requested = buildTarget != null;
+
 		switch (result) {
 			case WORKING -> {
 				// keep clicking
 			}
-			case DONE -> status = Status.FOLLOWING;
+			case DONE -> {
+				if (requested) {
+					finishBuild(minecraft, true, "Placed " + buildItem.getName(buildItem.getDefaultInstance())
+							.getString() + " at " + format(buildTarget) + ".");
+				} else {
+					status = Status.FOLLOWING;
+				}
+			}
 			case OUT_OF_RANGE -> {
 				placer.cancel();
 				replan(minecraft);
 			}
 			case NO_MATERIAL -> {
 				placer.cancel();
+				if (requested) {
+					// A named block has no substitute, and nothing to escalate to — going off to dig up
+					// a furnace is not a thing. Say so plainly instead.
+					finishBuild(minecraft, false, "No " + buildItem.getName(buildItem.getDefaultInstance())
+							.getString() + " in the inventory to place.");
+					return;
+				}
 				// Escalate: loot lying about first (free), then dig some up, and only give up on
 				// building when there is nothing worth mining either. The dropped-block search
 				// excludes the haul — chasing the spruce log we just dropped, only to refuse to
@@ -2058,6 +2154,15 @@ public final class BotController {
 		if (huntedEntity != null && huntedEntity.isAlive()) {
 			goal = new GoalBlock(BlockPos.containing(huntedEntity.position()));
 			replan(minecraft);
+			return;
+		}
+
+		// Arrived next to somewhere a block was asked for. Placed from here rather than from the
+		// exact spot, which is usually inside the block itself and therefore not stand-on-able.
+		if (buildTarget != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			placer.beginWith(buildTarget, buildItem);
+			status = Status.PLACING;
 			return;
 		}
 

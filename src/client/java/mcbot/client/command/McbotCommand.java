@@ -33,6 +33,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 /**
  * The {@code /mcbot} chat commands.
@@ -48,6 +49,9 @@ import net.minecraft.network.chat.Component;
  *                                  is false, which simply travels there once. Add a number to
  *                                  stop after that many — a count on its own implies `true`
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
+ *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
+ *   /mcbot inventory | deposit     list what is carried; bank it now
+ *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
  *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
@@ -90,6 +94,13 @@ public final class McbotCommand {
 										builder))
 								.executes(this::find)))
 				.then(chest())
+				.then(place())
+				.then(equip())
+				.then(drop())
+				.then(ClientCommands.literal("inventory")
+						.executes(context -> run(context, "inventory", Arguments.none())))
+				.then(ClientCommands.literal("deposit")
+						.executes(context -> run(context, "deposit", Arguments.none())))
 				.then(set())
 				.then(ai())
 				.then(ClientCommands.literal("api").executes(this::dumpApi))
@@ -209,6 +220,60 @@ public final class McbotCommand {
 				.then(ClientCommands.<String>argument("goal", StringArgumentType.greedyString())
 						.executes(context -> report(context,
 								agent.start(StringArgumentType.getString(context, "goal")))));
+	}
+
+	// ---------------------------------------------------------------- inventory and building
+
+	/** {@code /mcbot place <block> [<x> <y> <z>]}. */
+	private LiteralArgumentBuilder<FabricClientCommandSource> place() {
+		return ClientCommands.literal("place")
+				.then(ClientCommands.<String>argument("block", StringArgumentType.word())
+						.suggests(McbotCommand::suggestItems)
+						.executes(context -> run(context, "place", Arguments.of(
+								"block", StringArgumentType.getString(context, "block"))))
+						.then(ClientCommands.<Integer>argument("x", IntegerArgumentType.integer())
+								.then(ClientCommands.<Integer>argument("y", IntegerArgumentType.integer())
+										.then(ClientCommands.<Integer>argument("z", IntegerArgumentType.integer())
+												.executes(context -> run(context, "place", Arguments.of(
+														"block", StringArgumentType.getString(context, "block"),
+														"x", IntegerArgumentType.getInteger(context, "x"),
+														"y", IntegerArgumentType.getInteger(context, "y"),
+														"z", IntegerArgumentType.getInteger(context, "z"))))))));
+	}
+
+	/** {@code /mcbot equip <item>}. */
+	private LiteralArgumentBuilder<FabricClientCommandSource> equip() {
+		return ClientCommands.literal("equip")
+				.then(ClientCommands.<String>argument("item", StringArgumentType.word())
+						.suggests(McbotCommand::suggestItems)
+						.executes(context -> run(context, "equip", Arguments.of(
+								"item", StringArgumentType.getString(context, "item")))));
+	}
+
+	/** {@code /mcbot drop <item> [count]} — without a count, all of them. */
+	private LiteralArgumentBuilder<FabricClientCommandSource> drop() {
+		return ClientCommands.literal("drop")
+				.then(ClientCommands.<String>argument("item", StringArgumentType.word())
+						.suggests(McbotCommand::suggestItems)
+						.executes(context -> run(context, "drop", Arguments.of(
+								"item", StringArgumentType.getString(context, "item"))))
+						.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
+								.executes(context -> run(context, "drop", Arguments.of(
+										"item", StringArgumentType.getString(context, "item"),
+										"count", IntegerArgumentType.getInteger(context, "count"))))));
+	}
+
+	/**
+	 * Offers item ids <em>without</em> the {@code minecraft:} namespace.
+	 *
+	 * <p>Brigadier's {@code word()} rejects a colon, and the alternative — a greedy string — cannot be
+	 * followed by the coordinates {@code place} wants. Since the namespace is optional everywhere it
+	 * is read, leaving it out keeps every suggestion something that actually parses.</p>
+	 */
+	private static CompletableFuture<Suggestions> suggestItems(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		return SharedSuggestionProvider.suggest(
+				BuiltInRegistries.ITEM.keySet().stream().map(Identifier::getPath), builder);
 	}
 
 	// ---------------------------------------------------------------- settings

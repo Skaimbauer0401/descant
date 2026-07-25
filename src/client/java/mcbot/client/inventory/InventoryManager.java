@@ -1,10 +1,14 @@
 package mcbot.client.inventory;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
+import java.util.stream.Collectors;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -14,6 +18,7 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -404,5 +409,87 @@ public final class InventoryManager {
 	/** Whether the bot is carrying anything worth a trip to a chest. */
 	public static boolean hasHaul(LocalPlayer player) {
 		return has(player, InventoryManager::isHaul);
+	}
+
+	// ---------------------------------------------------------------- naming things
+
+	/** Puts a specific item in the main hand. @return false when the player has none */
+	public static boolean equipItem(Minecraft minecraft, LocalPlayer player, Item item) {
+		return equip(minecraft, player, stack -> stack.is(item));
+	}
+
+	/** How many of an item are carried, counting across stacks. */
+	public static int count(LocalPlayer player, Item item) {
+		Inventory inventory = player.getInventory();
+		int total = 0;
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (stack.is(item)) {
+				total += stack.getCount();
+			}
+		}
+		return total;
+	}
+
+	/**
+	 * Everything carried, tallied by item and ordered most-numerous first.
+	 *
+	 * <p>Ordered rather than alphabetical because the reader — increasingly a model deciding what to do
+	 * next — cares far more about the two hundred cobblestone than about a single stray sapling, and a
+	 * long list gets skimmed from the top.</p>
+	 */
+	public static Map<Item, Integer> contents(LocalPlayer player) {
+		Inventory inventory = player.getInventory();
+		Map<Item, Integer> tally = new HashMap<>();
+		for (int slot = 0; slot < inventory.getContainerSize(); slot++) {
+			ItemStack stack = inventory.getItem(slot);
+			if (!stack.isEmpty()) {
+				tally.merge(stack.getItem(), stack.getCount(), Integer::sum);
+			}
+		}
+		return tally.entrySet().stream()
+				.sorted(Map.Entry.<Item, Integer>comparingByValue().reversed())
+				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+						(a, b) -> a, LinkedHashMap::new));
+	}
+
+	/**
+	 * Throws items on the ground.
+	 *
+	 * <p>Done by clicking the slots rather than by equipping and pressing Q, because a throw is one
+	 * container input per stack and needs no hand: equipping would mean changing the held item for
+	 * every stack, which cannot be done more than once in a tick without the server losing track.</p>
+	 *
+	 * @param wanted how many to throw, or {@link Integer#MAX_VALUE} for all of them
+	 * @return how many were actually thrown
+	 */
+	public static int dropItem(Minecraft minecraft, LocalPlayer player, Item item, int wanted) {
+		if (minecraft.gameMode == null || wanted <= 0) {
+			return 0;
+		}
+		int thrown = 0;
+		for (Slot slot : player.inventoryMenu.slots) {
+			if (thrown >= wanted || !(slot.container instanceof Inventory)) {
+				continue;
+			}
+			ItemStack stack = slot.getItem();
+			if (!stack.is(item)) {
+				continue;
+			}
+			int remaining = wanted - thrown;
+			if (stack.getCount() <= remaining) {
+				// Button 1 throws the whole stack; 0 throws one item at a time.
+				minecraft.gameMode.handleContainerInput(player.inventoryMenu.containerId, slot.index,
+						1, ContainerInput.THROW, player);
+				thrown += stack.getCount();
+			} else {
+				for (int i = 0; i < remaining; i++) {
+					minecraft.gameMode.handleContainerInput(player.inventoryMenu.containerId, slot.index,
+							0, ContainerInput.THROW, player);
+				}
+				thrown += remaining;
+			}
+		}
+		return thrown;
 	}
 }

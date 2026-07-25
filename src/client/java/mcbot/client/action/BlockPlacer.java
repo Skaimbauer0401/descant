@@ -11,6 +11,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -37,6 +38,16 @@ public final class BlockPlacer {
 
 	private BlockPos target;
 	private Block excludedBlock;
+
+	/**
+	 * The exact item to place, or {@code null} to use any throwaway building block.
+	 *
+	 * <p>The distinction is between scaffolding and building. Bridging a gap only needs <em>a</em>
+	 * block and any cobble will do; being asked for a furnace means a furnace, and quietly putting
+	 * down dirt instead would be worse than failing.</p>
+	 */
+	private Item required;
+
 	private int ticks;
 
 	public void begin(BlockPos target) {
@@ -50,6 +61,19 @@ public final class BlockPlacer {
 	public void begin(BlockPos target, Block excludedBlock) {
 		this.target = target.immutable();
 		this.excludedBlock = excludedBlock;
+		this.required = null;
+		this.ticks = 0;
+	}
+
+	/**
+	 * Places one specific item, failing rather than substituting.
+	 *
+	 * @param item the block item to place — nothing else will be used
+	 */
+	public void beginWith(BlockPos target, Item item) {
+		this.target = target.immutable();
+		this.excludedBlock = null;
+		this.required = item;
 		this.ticks = 0;
 	}
 
@@ -64,6 +88,7 @@ public final class BlockPlacer {
 	public void cancel() {
 		target = null;
 		excludedBlock = null;
+		required = null;
 		ticks = 0;
 	}
 
@@ -81,7 +106,10 @@ public final class BlockPlacer {
 			return ActionState.FAILED;
 		}
 
-		if (!InventoryManager.equipBuildingBlock(minecraft, player, excludedBlock)) {
+		boolean holding = required != null
+				? InventoryManager.equipItem(minecraft, player, required)
+				: InventoryManager.equipBuildingBlock(minecraft, player, excludedBlock);
+		if (!holding) {
 			cancel();
 			return ActionState.NO_MATERIAL;
 		}
@@ -188,6 +216,16 @@ public final class BlockPlacer {
 		double dx = centre.x - player.getX();
 		double dz = centre.z - player.getZ();
 		return dx * dx + dz * dz < BotSettings.PILLAR_CENTRE_TOLERANCE.get() * BotSettings.PILLAR_CENTRE_TOLERANCE.get();
+	}
+
+	/**
+	 * Whether anything solid borders {@code target} to place against.
+	 *
+	 * <p>Exposed so a caller can pick a workable spot up front rather than sending the bot walking to
+	 * one it will only fail at on arrival.</p>
+	 */
+	public static boolean hasAnchor(Level level, BlockPos target) {
+		return findAnchorDirection(level, target) != null;
 	}
 
 	/**
