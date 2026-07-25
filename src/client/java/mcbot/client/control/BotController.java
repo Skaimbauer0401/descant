@@ -219,6 +219,17 @@ public final class BotController {
 	 */
 	private BlockPos depositChest;
 
+	/**
+	 * What the next deposit will hand over.
+	 *
+	 * <p>The automatic trip always banks the haul and keeps the tools, food and building blocks the
+	 * bot needs to carry on working. An <em>ordered</em> deposit is different: being told to stash the
+	 * food means stash the food, and second-guessing that would make the command useless for the one
+	 * case it was asked for. So the filter is a field rather than a constant, and the default is only
+	 * a default.</p>
+	 */
+	private Predicate<ItemStack> depositFilter = InventoryManager::isHaul;
+
 	/** Task parked while the bot runs a deposit errand, restored when it gets back. */
 	private Goal parkedGoal;
 	private BlockPos parkedMineTarget;
@@ -1198,6 +1209,7 @@ public final class BotController {
 			return false;
 		}
 
+		depositFilter = InventoryManager::isHaul; // the automatic trip never gives away the kit
 		beginDeposit(minecraft, "Inventory full — banking the haul at " + format(depositChest) + ".");
 		return true;
 	}
@@ -1227,17 +1239,19 @@ public final class BotController {
 	 *
 	 * @return why it cannot, or {@code null} once the trip has started
 	 */
-	public String depositNow(Minecraft minecraft, LocalPlayer player) {
+	public String depositNow(Minecraft minecraft, LocalPlayer player,
+			Predicate<ItemStack> what, String describe) {
 		if (depositChest == null) {
 			return "No chest set. Use chest to pick one first.";
 		}
 		if (depositing) {
 			return "Already on the way to the chest.";
 		}
-		if (!InventoryManager.hasHaul(player)) {
-			return "Nothing worth banking — it is all tools, food and building blocks.";
+		if (!InventoryManager.has(player, what)) {
+			return "Nothing to bank: no " + describe + " is being carried.";
 		}
-		beginDeposit(minecraft, "Banking the haul at " + format(depositChest) + ".");
+		depositFilter = what;
+		beginDeposit(minecraft, "Taking " + describe + " to the chest at " + format(depositChest) + ".");
 		return null;
 	}
 
@@ -1261,9 +1275,10 @@ public final class BotController {
 	/** Restores the task the deposit trip interrupted. */
 	private void finishDeposit(Minecraft minecraft, boolean banked) {
 		if (banked) {
-			message("Haul banked.");
+			message("Stashed.");
 		}
 		depositing = false;
+		depositFilter = InventoryManager::isHaul; // back to the safe default for the next trip
 		goal = parkedGoal;
 		mineTarget = parkedMineTarget;
 		mineTargetBlock = parkedMineTargetBlock;
@@ -2359,7 +2374,7 @@ public final class BotController {
 		// finished that instead.
 		if (depositing && minecraft.player != null) {
 			resetPlan(minecraft);
-			depositor.begin(depositChest, InventoryManager::isHaul);
+			depositor.begin(depositChest, depositFilter);
 			status = Status.DEPOSITING;
 			return;
 		}

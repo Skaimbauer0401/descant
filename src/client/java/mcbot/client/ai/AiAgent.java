@@ -299,7 +299,9 @@ public final class AiAgent {
 				- use right-clicks a block: levers, buttons, doors, gates, beds. It will open a \
 				smithing table or an anvil but cannot put anything into one — smelting is the \
 				only station work the bot can do.
-				- deposit banks the haul on demand; drop throws things away for good. Prefer \
-				deposit whenever a chest is set.""";
+				- deposit stashes things in the chest on demand. By default it banks the haul \
+				and keeps the tools, food and blocks the bot works with; pass what='food', \
+				what='all', or an item id, to hand over something specific instead. drop \
+				throws things away for good, so prefer deposit whenever a chest is set.""";
 	}
 }

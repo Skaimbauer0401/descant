@@ -55,7 +55,8 @@ import net.minecraft.resources.Identifier;
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
  *   /mcbot smelt &lt;item&gt; [count]    run a furnace: find it, load it, wait, collect
  *   /mcbot use                     right-click whatever the bot is looking at
- *   /mcbot inventory | deposit     list what is carried; bank it now
+ *   /mcbot inventory               list what is carried
+ *   /mcbot deposit [haul|food|all|&lt;item&gt;]  stash it now; defaults to the haul
  *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
@@ -133,7 +134,14 @@ public final class McbotCommand {
 				.then(ClientCommands.literal("inventory")
 						.executes(context -> run(context, "inventory", Arguments.none())))
 				.then(ClientCommands.literal("deposit")
-						.executes(context -> run(context, "deposit", Arguments.none())))
+						.executes(context -> run(context, "deposit", Arguments.none()))
+						.then(ClientCommands.<String>argument("what", StringArgumentType.word())
+								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
+										Stream.concat(Stream.of("haul", "food", "all"),
+												BuiltInRegistries.ITEM.keySet().stream().map(Identifier::getPath)),
+										builder))
+								.executes(context -> run(context, "deposit", Arguments.of(
+										"what", StringArgumentType.getString(context, "what"))))))
 				.then(set())
 				.then(ai())
 				.then(ClientCommands.literal("api").executes(this::dumpApi))
