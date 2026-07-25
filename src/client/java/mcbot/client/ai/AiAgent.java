@@ -285,9 +285,16 @@ public final class AiAgent {
 				coordinates of the nearest block of a kind without going there. All three \
 				cost nothing, so call them rather than guessing — locate before deciding \
 				whether to walk to something or place your own.
+				- look describes the surroundings: coordinates, which way it faces, dimension, \
+				biome, time of day, weather, light, and every creature nearby. Free, like \
+				the other two.
 				- place puts a block down, in front of the bot or at a spot you name. It has to \
-				be carried already — the bot cannot craft, so if it has no furnace it cannot \
-				make one.
+				be carried already.
+				- craft makes things from what is carried. Small recipes happen where the bot \
+				stands; ones needing a 3x3 grid send it to a crafting table by itself. It \
+				cannot smelt — anything needing a furnace is out of reach for now.
+				- use right-clicks a block: levers, buttons, doors, gates, beds. It will open a \
+				furnace or a smithing table but cannot put anything into one.
 				- deposit banks the haul on demand; drop throws things away for good. Prefer \
 				deposit whenever a chest is set.""";
 	}

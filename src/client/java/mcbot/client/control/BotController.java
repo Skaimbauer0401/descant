@@ -10,6 +10,7 @@ import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
 import mcbot.client.action.ChestDeposit;
+import mcbot.client.action.Crafter;
 import mcbot.client.action.CombatAction;
 import mcbot.client.action.DoorOpener;
 import mcbot.client.action.EatAction;
@@ -31,10 +32,12 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.crafting.display.RecipeDisplayId;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
@@ -73,6 +76,8 @@ public final class BotController {
 		MINING,
 		/** Emptying the haul into the remembered chest. */
 		DEPOSITING,
+		/** Making something, in the inventory grid or at a bench. */
+		CRAFTING,
 		/** Walking over the drops left by a broken block. */
 		COLLECTING,
 		SUCCEEDED,
@@ -95,6 +100,7 @@ public final class BotController {
 	private final EatAction eater = new EatAction();
 	private final CombatAction combat = new CombatAction();
 	private final ChestDeposit depositor = new ChestDeposit();
+	private final Crafter crafter = new Crafter();
 	private final Consumer<Component> messageSink;
 
 	private Status status = Status.IDLE;
@@ -174,6 +180,21 @@ public final class BotController {
 	 */
 	private BlockPos buildTarget;
 	private Item buildItem;
+
+	/**
+	 * A pending craft: what to make, how many, and the bench to make it at.
+	 *
+	 * <p>{@code craftTable} is {@code null} for anything that fits the inventory's own 2x2 grid, which
+	 * needs no journey and no bench — the distinction is decided before the task starts, by the recipe
+	 * itself, rather than being discovered on arrival.</p>
+	 */
+	private RecipeDisplayId craftRecipe;
+	private BlockPos craftTable;
+	private int craftCount;
+	private String craftName = "";
+
+	/** A block to right-click on arrival — a lever, a door, a station to open. */
+	private BlockPos useTarget;
 
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
 	private BlockPos mineTarget;
@@ -334,6 +355,94 @@ public final class BotController {
 		// from there, letting the ordinary pathfinder work out how to get to that spot.
 		navigateTo(approachPosition(minecraft, player, target), true, true);
 		return true;
+	}
+
+	/**
+	 * Makes something, walking to a bench first when the recipe needs one.
+	 *
+	 * @param table {@code null} to use the inventory's 2x2 grid, which needs no journey
+	 */
+	public void craft(Minecraft minecraft, LocalPlayer player, RecipeDisplayId recipe, BlockPos table,
+			int count, String name) {
+		this.craftRecipe = recipe;
+		this.craftTable = table == null ? null : table.immutable();
+		this.craftCount = count;
+		this.craftName = name;
+
+		boolean here = table == null
+				|| player.getEyePosition().distanceTo(Vec3.atCenterOf(table)) <= BotSettings.REACH.get();
+		if (here) {
+			resetPlan(minecraft);
+			crafter.begin(craftTable, recipe, count);
+			status = Status.CRAFTING;
+			return;
+		}
+		navigateTo(approachPosition(minecraft, player, table), true, true);
+	}
+
+	/** Right-clicks a block, walking to it first if it is out of reach. */
+	public void useBlock(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		this.useTarget = target.immutable();
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()) {
+			rightClick(minecraft, player, useTarget);
+			useTarget = null;
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
+			return;
+		}
+		navigateTo(approachPosition(minecraft, player, target), true, true);
+	}
+
+	/**
+	 * Sends one right-click at a block.
+	 *
+	 * <p>Aim is set directly rather than eased, because the click goes out on this same tick and a
+	 * gradual turn would have it land on whatever the bot happened to be facing on the way round.</p>
+	 */
+	private void rightClick(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		Vec3 centre = Vec3.atCenterOf(target);
+		Vec3 eye = player.getEyePosition();
+		player.setYRot(Steering.yawTowards(player.position(), centre));
+		player.setXRot(Steering.pitchTowards(eye, centre));
+
+		Direction face = Direction.getApproximateNearest(
+				eye.x - centre.x, eye.y - centre.y, eye.z - centre.z);
+		if (minecraft.gameMode != null) {
+			minecraft.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
+					new BlockHitResult(centre, face, target, false));
+			player.swing(InteractionHand.MAIN_HAND);
+		}
+	}
+
+	private void tickCrafting(Minecraft minecraft, LocalPlayer player) {
+		switch (crafter.tick(minecraft, player)) {
+			case WORKING -> {
+				// keep clicking
+			}
+			case DONE -> finishCrafting(minecraft, crafter.made() > 0
+					? "Made " + crafter.made() + " x " + craftName + "."
+					: "Couldn't make " + craftName + " — the ingredients ran out.");
+			case OUT_OF_RANGE -> {
+				crafter.cancel(minecraft);
+				replan(minecraft); // walk back into reach of the bench and try again
+			}
+			case NO_MATERIAL, FAILED -> {
+				crafter.cancel(minecraft);
+				finishCrafting(minecraft, crafter.made() > 0
+						? "Made " + crafter.made() + " x " + craftName + ", then stopped."
+						: "Couldn't craft " + craftName + ".");
+			}
+		}
+	}
+
+	private void finishCrafting(Minecraft minecraft, String reason) {
+		craftRecipe = null;
+		craftTable = null;
+		resetPlan(minecraft);
+		status = Status.SUCCEEDED;
+		input.clear();
+		message(reason);
 	}
 
 	/** Clears a build task without placing anything. */
@@ -629,6 +738,9 @@ public final class BotController {
 		huntReached = false;
 		buildTarget = null;
 		buildItem = null;
+		craftRecipe = null;
+		craftTable = null;
+		useTarget = null;
 		mineTarget = null;
 		mineTargetBlock = null;
 		collecting = false;
@@ -642,6 +754,7 @@ public final class BotController {
 				|| status == Status.BREAKING
 				|| status == Status.PLACING
 				|| status == Status.MINING
+				|| status == Status.CRAFTING
 				|| status == Status.COLLECTING
 				|| status == Status.EATING
 				|| status == Status.FIGHTING
@@ -714,6 +827,7 @@ public final class BotController {
 			case PLACING -> "building";
 			case COLLECTING -> "collecting";
 			case DEPOSITING -> "depositing";
+			case CRAFTING -> "crafting";
 			case EATING -> "eating";
 			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
 			case SUCCEEDED -> "done";
@@ -813,6 +927,7 @@ public final class BotController {
 			case MINING -> tickMining(minecraft, player);
 			case COLLECTING -> tickCollecting(minecraft, player);
 			case DEPOSITING -> tickDepositing(minecraft, player);
+			case CRAFTING -> tickCrafting(minecraft, player);
 			default -> {
 			}
 		}
@@ -2141,6 +2256,7 @@ public final class BotController {
 		doorOpener.reset();
 		if (minecraft != null) {
 			depositor.cancel(minecraft);
+			crafter.cancel(minecraft);
 		}
 	}
 
@@ -2199,6 +2315,26 @@ public final class BotController {
 		if (huntedEntity != null && huntedEntity.isAlive()) {
 			goal = new GoalBlock(BlockPos.containing(huntedEntity.position()));
 			replan(minecraft);
+			return;
+		}
+
+		// Arrived at the bench we came to use.
+		if (craftRecipe != null && craftTable != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			crafter.begin(craftTable, craftRecipe, craftCount);
+			status = Status.CRAFTING;
+			return;
+		}
+
+		// Arrived at something to right-click.
+		if (useTarget != null && minecraft.player != null) {
+			BlockPos target = useTarget;
+			useTarget = null;
+			rightClick(minecraft, minecraft.player, target);
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
+			message("Used the block at " + format(target) + ".");
 			return;
 		}
 

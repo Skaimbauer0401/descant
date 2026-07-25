@@ -51,6 +51,9 @@ import net.minecraft.resources.Identifier;
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
  *   /mcbot locate &lt;block&gt;          report where the nearest one is, without moving
+ *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
+ *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
+ *   /mcbot use                     right-click whatever the bot is looking at
  *   /mcbot inventory | deposit     list what is carried; bank it now
  *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
@@ -98,6 +101,19 @@ public final class McbotCommand {
 				.then(place())
 				.then(equip())
 				.then(drop())
+				.then(ClientCommands.literal("look")
+						.executes(context -> run(context, "look", Arguments.none())))
+				.then(ClientCommands.literal("use")
+						.executes(context -> run(context, "use", Arguments.none())))
+				.then(ClientCommands.literal("craft")
+						.then(ClientCommands.<String>argument("item", StringArgumentType.word())
+								.suggests(McbotCommand::suggestItems)
+								.executes(context -> run(context, "craft", Arguments.of(
+										"item", StringArgumentType.getString(context, "item"))))
+								.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
+										.executes(context -> run(context, "craft", Arguments.of(
+												"item", StringArgumentType.getString(context, "item"),
+												"count", IntegerArgumentType.getInteger(context, "count")))))))
 				.then(ClientCommands.literal("locate")
 						.then(ClientCommands.<String>argument("block", StringArgumentType.word())
 								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
