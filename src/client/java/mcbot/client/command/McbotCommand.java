@@ -42,10 +42,11 @@ import net.minecraft.network.chat.Component;
  *   /mcbot goto &lt;x&gt; &lt;z&gt;            travel to that column, at whatever height the ground is
  *   /mcbot goto &lt;y&gt;                reach that height, anywhere
  *   /mcbot walk  &lt;same forms&gt;      as above, but without modifying the world
- *   /mcbot find &lt;block|mob&gt; [true|false]  go to the nearest block or mob. Add `true` to mine
- *                                          or kill it, sweep up the drops and move on to the
- *                                          next; the default is false, which simply travels
- *                                          there once
+ *   /mcbot find &lt;block|mob&gt; [true|false] [count]
+ *                                  go to the nearest block or mob. Add `true` to mine or kill
+ *                                  it, sweep up the drops and move on to the next; the default
+ *                                  is false, which simply travels there once. Add a number to
+ *                                  stop after that many — a count on its own implies `true`
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
@@ -129,22 +130,44 @@ public final class McbotCommand {
 										"build", build)))));
 	}
 
+	/** {@code /mcbot find <block|mob> [true|false] [count]}. */
 	private int find(CommandContext<FabricClientCommandSource> context) {
 		String raw = StringArgumentType.getString(context, "target").trim();
 
-		// Peel an optional trailing true/false off the end. A greedy string is needed because block
-		// ids contain a colon, which Brigadier's word() rejects, and a greedy argument cannot be
-		// followed by another — so the flag is split off by hand rather than parsed as its own node.
-		String execute = null;
-		int lastSpace = raw.lastIndexOf(' ');
-		if (lastSpace > 0) {
-			String tail = raw.substring(lastSpace + 1).toLowerCase(Locale.ROOT);
-			if (tail.equals("true") || tail.equals("false")) {
-				execute = tail;
-				raw = raw.substring(0, lastSpace).trim();
-			}
+		// The optional trailing arguments are peeled off the end by hand. A greedy string is needed
+		// because block ids contain a colon, which Brigadier's word() rejects, and nothing may follow
+		// a greedy argument — so they cannot be nodes of their own.
+		//
+		// Peeled right to left, count before the flag, since that is the order they are written in.
+		String count = null;
+		String tail = lastWord(raw);
+		if (tail != null && tail.chars().allMatch(Character::isDigit)) {
+			count = tail;
+			raw = withoutLastWord(raw);
 		}
-		return run(context, "find", Arguments.of("target", raw, "execute", execute));
+		String execute = null;
+		tail = lastWord(raw);
+		if (tail != null && (tail.equals("true") || tail.equals("false"))) {
+			execute = tail;
+			raw = withoutLastWord(raw);
+		}
+		// A count on its own means business: nobody asks for twenty of something they only want to
+		// walk to, and making them type 'true' as well would be a papercut with no upside.
+		if (count != null && execute == null) {
+			execute = "true";
+		}
+		return run(context, "find",
+				Arguments.of("target", raw, "execute", execute, "count", count));
+	}
+
+	/** The last space-separated word, lowercased, or {@code null} when there is only one. */
+	private static String lastWord(String text) {
+		int lastSpace = text.lastIndexOf(' ');
+		return lastSpace > 0 ? text.substring(lastSpace + 1).toLowerCase(Locale.ROOT) : null;
+	}
+
+	private static String withoutLastWord(String text) {
+		return text.substring(0, text.lastIndexOf(' ')).trim();
 	}
 
 	// ---------------------------------------------------------------- banking

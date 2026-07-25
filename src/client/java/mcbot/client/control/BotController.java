@@ -128,6 +128,31 @@ public final class BotController {
 	/** Whether a hunt mines what it finds and moves on, or merely travels to it once. */
 	private boolean huntExecute = true;
 
+	/**
+	 * How many to gather before the hunt is finished, or {@code 0} for "everything in range".
+	 *
+	 * <p>Counted in <em>blocks mined and mobs killed</em>, not in items ending up in the inventory.
+	 * That is a deliberate simplification and worth knowing about: fortune, deepslate variants and
+	 * mobs with random drop counts all mean twenty blocks is not exactly twenty items. Counting the
+	 * yield instead would need the drop item to be known up front, which the client cannot ask for —
+	 * loot tables live on the server, and a mob has no sensible answer at all. Counting the thing the
+	 * bot actually did is honest, uniform across blocks and mobs, and predictable enough to aim
+	 * with.</p>
+	 */
+	private int huntQuota;
+
+	/** How many have been mined or killed so far on this hunt. */
+	private int huntTally;
+
+	/**
+	 * Whether the last one finished the job.
+	 *
+	 * <p>Set when the block breaks or the mob dies, read once the drops have been swept up. The two
+	 * are separated by the whole collecting phase, and stopping at the kill would walk away from the
+	 * loot that was the point of the exercise.</p>
+	 */
+	private boolean huntReached;
+
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
 	private BlockPos mineTarget;
 	private Block mineTargetBlock;
@@ -386,6 +411,39 @@ public final class BotController {
 	}
 
 	/**
+	 * Sets how many to gather before stopping, and resets the count.
+	 *
+	 * <p>Separate from {@link #huntFor} because that is re-entered for every individual target — it is
+	 * how the hunt steps from one ore to the next — so a quota passed to it would be reset to full
+	 * every time one was mined, and the hunt would never end. This is called once, when the hunt is
+	 * ordered.</p>
+	 *
+	 * @param quota how many to gather, or {@code 0} for everything within range
+	 */
+	public void setHuntQuota(int quota) {
+		this.huntQuota = Math.max(0, quota);
+		this.huntTally = 0;
+	}
+
+	/** Progress through the quota, or {@code null} when there is no hunt or no limit. */
+	public String huntProgress() {
+		if (huntQuota <= 0 || (huntedBlock == null && huntedType == null)) {
+			return null;
+		}
+		return huntTally + " of " + huntQuota + " " + huntedName;
+	}
+
+	/**
+	 * Records one mined block or one killed mob, and says whether that is enough.
+	 *
+	 * @return whether the quota has now been met
+	 */
+	private boolean tallyOne() {
+		huntTally++;
+		return huntQuota > 0 && huntTally >= huntQuota;
+	}
+
+	/**
 	 * Keeps the goal on a moving quarry.
 	 *
 	 * <p>A mob does not wait to be walked to. Pathing once to where it stood arrives at empty
@@ -402,6 +460,7 @@ public final class BotController {
 			huntedEntity = null;
 			if (huntExecute) {
 				// We were hunting it down. Sweep up what it dropped, then go after the next one.
+				huntReached = tallyOne();
 				message(huntedName + " down.");
 				beginCollecting(minecraft, whereItFell);
 				return;
@@ -483,6 +542,9 @@ public final class BotController {
 		huntedBlock = null;
 		huntedType = null;
 		huntedEntity = null;
+		huntQuota = 0;
+		huntTally = 0;
+		huntReached = false;
 		mineTarget = null;
 		mineTargetBlock = null;
 		collecting = false;
@@ -1415,8 +1477,14 @@ public final class BotController {
 			case WORKING -> {
 				// keep mining
 			}
-			case DONE -> beginCollecting(minecraft,
-					mineTarget != null ? Vec3.atCenterOf(mineTarget) : player.position());
+			case DONE -> {
+				// Counted here rather than after the sweep, because the sweep is where drops that
+				// cannot be reached get abandoned — and a block that was mined still counts as
+				// mined even if its drop rolled into lava.
+				huntReached = tallyOne();
+				beginCollecting(minecraft,
+						mineTarget != null ? Vec3.atCenterOf(mineTarget) : player.position());
+			}
 			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
 				breaker.cancel(minecraft);
 				// Too far to touch from here. Aim the route at the block itself so the pathfinder
@@ -1506,12 +1574,32 @@ public final class BotController {
 		continueHunt(minecraft);
 	}
 
-	/** Looks for the next target of the hunted kind, finishing the hunt when none are left. */
+	/**
+	 * Looks for the next target of the hunted kind, finishing the hunt when the quota is met or none
+	 * are left.
+	 */
 	private void continueHunt(Minecraft minecraft) {
 		Block block = huntedBlock;
 		EntityType<?> type = huntedType;
 		String name = huntedName;
 		boolean execute = huntExecute;
+
+		if (huntReached) {
+			// Asked for a number and got it. Announced separately from running out, because "got the
+			// twenty you wanted" and "there are none left anywhere" are very different outcomes and
+			// the difference decides what to do next.
+			message("Got " + huntTally + " " + name + " — that's what you asked for.");
+			huntReached = false;
+			huntQuota = 0;
+			resetPlan(minecraft);
+			huntedBlock = null;
+			huntedType = null;
+			huntedEntity = null;
+			mineTarget = null;
+			status = Status.SUCCEEDED;
+			input.clear();
+			return;
+		}
 		resetPlan(minecraft);
 
 		LocalPlayer player = minecraft.player;

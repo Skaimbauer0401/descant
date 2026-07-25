@@ -52,6 +52,11 @@ public final class StatusAction implements Action {
 			}
 		}
 
+		String progress = controller.huntProgress();
+		if (progress != null) {
+			text.append(" [").append(progress).append("]");
+		}
+
 		text.append(" | at ").append((int) player.getX()).append(", ")
 				.append((int) player.getY()).append(", ").append((int) player.getZ());
 		text.append(" | health ").append(Math.round(player.getHealth())).append("/20");

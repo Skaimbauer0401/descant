@@ -270,8 +270,13 @@ public final class AiAgent {
 				- Coordinates are x (east), z (south) and y (height). Sea level is about y=63.
 				- For travelling, use goto with x and z and no y. Naming a height means guessing \
 				the terrain and the bot will tunnel or pillar to reach your number.
-				- To gather a resource, use find with execute=true. It mines or kills every one it \
-				can reach and picks up the drops — you do not need to call it once per block.
+				- To gather a resource, use find with execute=true, and ALWAYS give a count \
+				unless the player really did ask for all of them. One call gathers the whole \
+				amount, picking up the drops as it goes — you never call it once per block. \
+				Without a count it clears every one within a few hundred blocks, which on \
+				anything common takes a very long time and is rarely what was wanted.
+				- If the player says "some", or does not say how many, choose a sensible number \
+				yourself: about a stack of a common material, 10 to 20 of an ore.
 				- Blocks and mobs are named by Minecraft id: iron_ore, oak_log, cow.
 				- Set a chest with chest before a long gathering job, so the bot can empty its \
 				inventory and keep going instead of stopping when full.

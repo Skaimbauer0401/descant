@@ -32,9 +32,10 @@ public final class FindAction implements Action {
 	@Override
 	public String description() {
 		return "Go to the nearest block or mob of a given kind. With execute=true the bot mines it (or "
-				+ "kills it), picks up the drops and moves on to the next one, repeating until none are "
-				+ "left in range — this is how you gather a resource. With execute=false it simply "
-				+ "travels there once and stops.";
+				+ "kills it), picks up the drops and moves on to the next one — this is how you gather a "
+				+ "resource. Give a count to stop after that many; without one it keeps going until "
+				+ "there are none left in range, which for a common block may be thousands of them. "
+				+ "With execute=false it simply travels there once and stops.";
 	}
 
 	@Override
@@ -45,13 +46,23 @@ public final class FindAction implements Action {
 								+ "The 'minecraft:' prefix is optional."),
 				Parameter.optional("execute", ParameterType.BOOLEAN,
 						"True to mine or kill it and keep going to the next one; false to just walk "
-								+ "there once. Default false."));
+								+ "there once. Default false."),
+				Parameter.optional("count", ParameterType.INTEGER,
+						"How many to mine or kill before stopping. Needs execute=true. Counts blocks "
+								+ "broken and mobs killed, not items collected, so allow for a block "
+								+ "sometimes dropping more than one. Leave it out to clear every one in "
+								+ "range, which on a common ore can take a very long time."));
 	}
 
 	@Override
 	public ActionResult run(ActionContext context, Arguments arguments) {
 		String raw = arguments.getString("target");
 		boolean execute = arguments.getBoolean("execute", false);
+		int count = arguments.getInt("count", 0);
+		if (count > 0 && !execute) {
+			return ActionResult.failed("A count needs execute=true — without it the bot only walks to "
+					+ "the nearest one and never gathers any.");
+		}
 
 		Identifier id = Identifier.tryParse(raw.contains(":") ? raw : "minecraft:" + raw);
 		if (id == null) {
@@ -67,9 +78,11 @@ public final class FindAction implements Action {
 			boolean found = context.controller().huntFor(
 					context.minecraft(), context.player(), block.get(),
 					block.get().getName().getString(), execute);
-			return found
-					? ActionResult.okQuiet((execute ? "Mining " : "Heading to ") + "the nearest " + raw + ".")
-					: ActionResult.failedQuiet("No " + raw + " in range. Travel somewhere else and try again.");
+			if (!found) {
+				return ActionResult.failedQuiet("No " + raw + " in range. Travel somewhere else and try again.");
+			}
+			context.controller().setHuntQuota(count);
+			return ActionResult.okQuiet(describe(execute, count, raw));
 		}
 
 		Optional<EntityType<?>> type = BuiltInRegistries.ENTITY_TYPE.getOptional(id);
@@ -77,12 +90,23 @@ public final class FindAction implements Action {
 			boolean found = context.controller().huntForEntity(
 					context.minecraft(), context.player(), type.get(),
 					type.get().getDescription().getString(), execute);
-			return found
-					? ActionResult.okQuiet((execute ? "Hunting " : "Heading to ") + "the nearest " + raw + ".")
-					: ActionResult.failedQuiet("No " + raw + " nearby. Mobs are only visible within a few "
-							+ "hundred blocks, so travel somewhere else and try again.");
+			if (!found) {
+				return ActionResult.failedQuiet("No " + raw + " nearby. Mobs are only visible within a few "
+						+ "hundred blocks, so travel somewhere else and try again.");
+			}
+			context.controller().setHuntQuota(count);
+			return ActionResult.okQuiet(describe(execute, count, raw));
 		}
 
 		return ActionResult.failed("There is no block or mob called '" + raw + "'.");
+	}
+
+	private static String describe(boolean execute, int count, String target) {
+		if (!execute) {
+			return "Heading to the nearest " + target + ".";
+		}
+		return count > 0
+				? "Gathering " + count + " " + target + "."
+				: "Gathering every " + target + " in range.";
 	}
 }
