@@ -281,8 +281,10 @@ public final class AiAgent {
 				- Set a chest with chest before a long gathering job, so the bot can empty its \
 				inventory and keep going instead of stopping when full.
 				- status tells you where the bot is, its health and hunger, and how full it is; \
-				inventory tells you exactly what it is carrying. Both cost nothing, so call \
-				them rather than guessing.
+				inventory tells you exactly what it is carrying; locate gives the exact \
+				coordinates of the nearest block of a kind without going there. All three \
+				cost nothing, so call them rather than guessing — locate before deciding \
+				whether to walk to something or place your own.
 				- place puts a block down, in front of the bot or at a spot you name. It has to \
 				be carried already — the bot cannot craft, so if it has no furnace it cannot \
 				make one.

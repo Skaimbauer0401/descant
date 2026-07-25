@@ -50,6 +50,7 @@ import net.minecraft.resources.Identifier;
  *                                  stop after that many — a count on its own implies `true`
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
+ *   /mcbot locate &lt;block&gt;          report where the nearest one is, without moving
  *   /mcbot inventory | deposit     list what is carried; bank it now
  *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
@@ -97,6 +98,12 @@ public final class McbotCommand {
 				.then(place())
 				.then(equip())
 				.then(drop())
+				.then(ClientCommands.literal("locate")
+						.then(ClientCommands.<String>argument("block", StringArgumentType.word())
+								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
+										BuiltInRegistries.BLOCK.keySet().stream().map(Identifier::getPath), builder))
+								.executes(context -> run(context, "locate", Arguments.of(
+										"block", StringArgumentType.getString(context, "block"))))))
 				.then(ClientCommands.literal("inventory")
 						.executes(context -> run(context, "inventory", Arguments.none())))
 				.then(ClientCommands.literal("deposit")

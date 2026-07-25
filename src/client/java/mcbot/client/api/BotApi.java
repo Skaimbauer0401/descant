@@ -9,6 +9,7 @@ import mcbot.client.api.actions.FindAction;
 import mcbot.client.api.actions.GotoAction;
 import mcbot.client.api.actions.GotoLevelAction;
 import mcbot.client.api.actions.InventoryAction;
+import mcbot.client.api.actions.LocateAction;
 import mcbot.client.api.actions.PlaceAction;
 import mcbot.client.api.actions.SetAction;
 import mcbot.client.api.actions.StatusAction;
@@ -46,6 +47,7 @@ public final class BotApi {
 		actions.register(new GotoLevelAction());
 		actions.register(new FindAction());
 		actions.register(new ChestAction());
+		actions.register(new LocateAction());
 		actions.register(new PlaceAction());
 		actions.register(new InventoryAction());
 		actions.register(new EquipAction());

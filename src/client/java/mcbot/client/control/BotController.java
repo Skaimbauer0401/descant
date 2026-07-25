@@ -146,6 +146,17 @@ public final class BotController {
 	private int huntTally;
 
 	/**
+	 * What the current break is chewing through, and where.
+	 *
+	 * <p>Captured when the break starts, because by the time it finishes the block is air and there is
+	 * nothing left to identify. The hunt counts by block type, and blocks get broken by three
+	 * different routes — the thing we came for, an obstruction on the path, and a shove to get
+	 * unstuck — of which only the first used to be counted.</p>
+	 */
+	private Block breakingBlock;
+	private BlockPos breakingPos;
+
+	/**
 	 * Whether the last one finished the job.
 	 *
 	 * <p>Set when the block breaks or the mob dies, read once the drops have been swept up. The two
@@ -477,6 +488,31 @@ public final class BotController {
 			return null;
 		}
 		return huntTally + " of " + huntQuota + " " + huntedName;
+	}
+
+	/**
+	 * Starts breaking a block, noting what it is first.
+	 *
+	 * <p>Every break goes through here so that none of them can quietly escape the hunt's tally. That
+	 * was the bug: asked for six oak logs, the bot mined six as <em>targets</em> but many more as
+	 * obstructions on the way between them — a tree is mostly in its own way — and only the targets
+	 * were counted, so the quota was reached long after the wood was.</p>
+	 */
+	private void beginBreaking(Minecraft minecraft, BlockPos pos) {
+		breakingPos = pos.immutable();
+		breakingBlock = minecraft.level.getBlockState(pos).getBlock();
+		breaker.begin(pos);
+	}
+
+	/**
+	 * Counts a finished break against the quota, if it was one of the things we came for.
+	 *
+	 * @return whether that was the last one needed
+	 */
+	private boolean countBrokenBlock() {
+		boolean wanted = huntExecute && huntedBlock != null && breakingBlock == huntedBlock;
+		breakingBlock = null;
+		return wanted && tallyOne();
 	}
 
 	/**
@@ -1155,7 +1191,7 @@ public final class BotController {
 			if (minecraft.level.getBlockState(blocking).isAir()) {
 				breakIndex++; // already gone — someone else mined it, or it was a plant
 			} else {
-				breaker.begin(blocking);
+				beginBreaking(minecraft, blocking);
 				status = Status.BREAKING;
 			}
 			return;
@@ -1538,6 +1574,15 @@ public final class BotController {
 				// stand still and keep mining
 			}
 			case DONE -> {
+				BlockPos broken = breakingPos;
+				if (countBrokenBlock()) {
+					// The quota was filled by a block we were only cutting through. Sweep up what it
+					// dropped and finish there rather than walking on to a target we no longer need —
+					// but sweep first, because the drops are the reason we were mining at all.
+					huntReached = true;
+					beginCollecting(minecraft, Vec3.atCenterOf(broken));
+					return;
+				}
 				breakIndex++;
 				status = Status.FOLLOWING;
 			}
@@ -1558,7 +1603,7 @@ public final class BotController {
 				// Counted here rather than after the sweep, because the sweep is where drops that
 				// cannot be reached get abandoned — and a block that was mined still counts as
 				// mined even if its drop rolled into lava.
-				huntReached = tallyOne();
+				huntReached = countBrokenBlock() || huntReached;
 				beginCollecting(minecraft,
 						mineTarget != null ? Vec3.atCenterOf(mineTarget) : player.position());
 			}
@@ -1996,7 +2041,7 @@ public final class BotController {
 		for (BlockPos ahead : new BlockPos[] { feet.above().relative(dir), feet.relative(dir) }) {
 			if (world.isKnown(ahead) && !world.state(ahead).isAir() && world.isBreakable(ahead)) {
 				resetPlan(minecraft);
-				breaker.begin(ahead);
+				beginBreaking(minecraft, ahead);
 				status = Status.BREAKING;
 				return true;
 			}
@@ -2173,7 +2218,7 @@ public final class BotController {
 			if (mineTargetBlock != null
 					&& minecraft.level.getBlockState(mineTarget).is(mineTargetBlock)) {
 				resetPlan(minecraft);
-				breaker.begin(mineTarget);
+				beginBreaking(minecraft, mineTarget);
 				status = Status.MINING;
 				return;
 			}

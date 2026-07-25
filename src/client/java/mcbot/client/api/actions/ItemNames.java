@@ -4,6 +4,8 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * Turns the names people and models write into registry entries.
@@ -27,6 +29,23 @@ final class ItemNames {
 		// An unknown id resolves to AIR rather than to nothing, so without this every typo would
 		// silently become a valid request to equip or drop empty space.
 		return item == null || item == Items.AIR ? null : item;
+	}
+
+	/** The block with this id, or {@code null} if there is no such thing. */
+	static Block resolveBlock(String name) {
+		Identifier id = Identifier.tryParse(name.contains(":") ? name : "minecraft:" + name.trim());
+		if (id == null) {
+			return null;
+		}
+		Block block = BuiltInRegistries.BLOCK.getOptional(id).orElse(null);
+		// Same trap as above: an unknown id resolves to AIR, so a typo would silently become a
+		// perfectly valid request to go and look for empty space.
+		return block == null || (block == Blocks.AIR && !name.endsWith("air")) ? null : block;
+	}
+
+	static String unknownBlock(String name) {
+		return "There is no block called '" + name + "'. Use a Minecraft id like 'crafting_table', "
+				+ "'furnace' or 'iron_ore'.";
 	}
 
 	static String unknown(String name) {
