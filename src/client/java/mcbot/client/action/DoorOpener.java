@@ -60,7 +60,7 @@ public final class DoorOpener {
 
 		Vec3 centre = Vec3.atCenterOf(pos);
 		Vec3 eye = player.getEyePosition();
-		if (eye.distanceTo(centre) > BotSettings.REACH) {
+		if (eye.distanceTo(centre) > BotSettings.REACH.get()) {
 			return false; // still too far; keep walking and try again as we close
 		}
 

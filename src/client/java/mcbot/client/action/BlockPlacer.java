@@ -100,7 +100,7 @@ public final class BlockPlacer {
 				clickedFace.getStepZ() * 0.5);
 
 		Vec3 eye = player.getEyePosition();
-		if (eye.distanceTo(hit) > BotSettings.REACH) {
+		if (eye.distanceTo(hit) > BotSettings.REACH.get()) {
 			return ActionState.OUT_OF_RANGE;
 		}
 
@@ -187,7 +187,7 @@ public final class BlockPlacer {
 		Vec3 centre = Vec3.atBottomCenterOf(target);
 		double dx = centre.x - player.getX();
 		double dz = centre.z - player.getZ();
-		return dx * dx + dz * dz < BotSettings.PILLAR_CENTRE_TOLERANCE * BotSettings.PILLAR_CENTRE_TOLERANCE;
+		return dx * dx + dz * dz < BotSettings.PILLAR_CENTRE_TOLERANCE.get() * BotSettings.PILLAR_CENTRE_TOLERANCE.get();
 	}
 
 	/**

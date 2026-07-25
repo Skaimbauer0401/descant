@@ -167,7 +167,7 @@ public final class PathFinder {
 		int sinceTimeCheck = 0;
 
 		while (!open.isEmpty()) {
-			if (expanded >= BotSettings.MAX_NODES) {
+			if (expanded >= BotSettings.MAX_NODES.get()) {
 				return finish(false);
 			}
 			// Checking the clock is not free, so only do it every so often.
@@ -301,7 +301,7 @@ public final class PathFinder {
 		BlockPos up = from.above();
 		if (world.isClimbable(from)
 				&& world.isKnown(up) && world.isClimbable(up) && simPassable(up.above())) {
-			add(node, up, BotSettings.LADDER_UP_COST, NO_BREAK, null);
+			add(node, up, BotSettings.LADDER_UP_COST.get(), NO_BREAK, null);
 		}
 
 		// Going down only needs a ladder *below* us, so this also covers stepping off solid ground at
@@ -310,7 +310,7 @@ public final class PathFinder {
 		// fall down its own shaft instead.
 		BlockPos down = from.below();
 		if (world.isKnown(down) && world.isClimbable(down) && simFitsAt(down)) {
-			add(node, down, BotSettings.LADDER_DOWN_COST, NO_BREAK, null);
+			add(node, down, BotSettings.LADDER_DOWN_COST.get(), NO_BREAK, null);
 		}
 	}
 
@@ -444,7 +444,7 @@ public final class PathFinder {
 			return;
 		}
 
-		for (int distance = 2; distance <= BotSettings.MAX_PARKOUR_DISTANCE; distance++) {
+		for (int distance = 2; distance <= BotSettings.MAX_PARKOUR_DISTANCE.get(); distance++) {
 			BlockPos column = from.offset(dx * distance, 0, dz * distance);
 			if (!world.isKnown(column)) {
 				return; // cannot see the landing; do not guess across unloaded chunks
@@ -458,7 +458,7 @@ public final class PathFinder {
 			// only worth generating for the shorter jumps — but without it every raised ledge across a
 			// gap has to be bridged or walked around.
 			BlockPos higher = column.above();
-			if (distance <= BotSettings.MAX_PARKOUR_ASCEND_DISTANCE
+			if (distance <= BotSettings.MAX_PARKOUR_ASCEND_DISTANCE.get()
 					&& world.isKnown(higher) && simFitsAt(higher) && simFlushFloor(column)
 					&& ascendCorridorClear(from, dx, dz, distance)) {
 				addParkour(node, higher, distance, dx, dz, true);
@@ -486,19 +486,19 @@ public final class PathFinder {
 		// are charged at the walking rate; only distance 4 — the three-block gap — needs the sprint.
 		// Pricing every jump as a sprint, as this used to, told the executor to sprint them all, and a
 		// sprint-jump across a one-block gap overshoots the landing entirely.
-		double cost = distance >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE
-				? distance * BotSettings.SPRINT_COST
-				: distance * BotSettings.WALK_COST;
-		cost += BotSettings.JUMP_PENALTY;
+		double cost = distance >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get()
+				? distance * BotSettings.SPRINT_COST.get()
+				: distance * BotSettings.WALK_COST.get();
+		cost += BotSettings.JUMP_PENALTY.get();
 		if (ascend) {
-			cost += BotSettings.JUMP_COST;
+			cost += BotSettings.JUMP_COST.get();
 		}
 
 		// Bridging is preferred to jumping wherever both are possible, so a jump is surcharged past
 		// what bridging the same span would cost. Only when the bot could actually build, though: with
 		// nothing to place, a jump is the cheap option again rather than a reason to walk miles around.
 		if (allowPlace) {
-			cost += (distance - 1) * BotSettings.PARKOUR_BRIDGE_SURCHARGE;
+			cost += (distance - 1) * BotSettings.PARKOUR_BRIDGE_SURCHARGE.get();
 		}
 		add(parent, landing, cost, NO_BREAK, null, distance);
 	}
@@ -556,7 +556,7 @@ public final class PathFinder {
 		// retrying until it gives up. Climbing out of water is a step-up or a jump, not a swim.
 		if (world.isKnown(up) && simWater(up)) {
 			if (simFitsAt(up)) {
-				add(node, up, BotSettings.SWIM_COST, NO_BREAK, null);
+				add(node, up, BotSettings.SWIM_COST.get(), NO_BREAK, null);
 			} else if (simPassable(up)) {
 				// Body space is clear but the ceiling above it is not. Mine straight up while
 				// treading water — no footing needed, which is what makes this possible here and
@@ -564,7 +564,7 @@ public final class PathFinder {
 				BlockPos ceiling = from.above(2);
 				int ticks = breakTicks(ceiling);
 				if (ticks >= 0) {
-					add(node, up, BotSettings.SWIM_COST + ticks + BotSettings.BREAK_OVERHEAD,
+					add(node, up, BotSettings.SWIM_COST.get() + ticks + BotSettings.BREAK_OVERHEAD.get(),
 							List.of(ceiling), null);
 				}
 			}
@@ -572,7 +572,7 @@ public final class PathFinder {
 
 		BlockPos down = from.below();
 		if (world.isKnown(down) && simFitsAt(down) && simWater(down)) {
-			add(node, down, BotSettings.SWIM_COST, NO_BREAK, null);
+			add(node, down, BotSettings.SWIM_COST.get(), NO_BREAK, null);
 		}
 	}
 
@@ -585,7 +585,7 @@ public final class PathFinder {
 
 		boolean diagonal = dx != 0 && dz != 0;
 		double distance = diagonal ? BotSettings.DIAGONAL_MULTIPLIER : 1.0;
-		double baseCost = BotSettings.WALK_COST * distance;
+		double baseCost = BotSettings.WALK_COST.get() * distance;
 
 		if (diagonal) {
 			// Both orthogonal components must be body-clear, or the move cuts the corner of a block.
@@ -609,7 +609,7 @@ public final class PathFinder {
 			// (feet in water, head in air) is left as a walk, which is what it physically is.
 			boolean submerged = simWater(target) && simWater(target.above());
 			if (submerged) {
-				add(node, target, BotSettings.SWIM_COST * distance, NO_BREAK, null);
+				add(node, target, BotSettings.SWIM_COST.get() * distance, NO_BREAK, null);
 			} else if (world.isClimbable(target)) {
 				// Stepping onto a ladder or vine. It holds the player up without anything underfoot, so
 				// this has to be caught before the "nothing to stand on" branch below, which would
@@ -621,14 +621,14 @@ public final class PathFinder {
 				// a climb the player cannot make.
 				addWithClimb(node, from, target, baseCost);
 			} else if (simWater(target)) {
-				add(node, target, BotSettings.SWIM_COST * distance, NO_BREAK, null);
+				add(node, target, BotSettings.SWIM_COST.get() * distance, NO_BREAK, null);
 			} else {
 				tryDescend(node, target, baseCost);
 				// Nothing to stand on: bridge across by placing a block underfoot. The anchor may
 				// be a block this same route places a step earlier, which is what lets a bridge run
 				// further than one block out over a gap.
 				if (allowPlace && canBuildSupport(target.below())) {
-					add(node, target, baseCost + BotSettings.PLACE_COST, NO_BREAK, target.below());
+					add(node, target, baseCost + BotSettings.PLACE_COST.get(), NO_BREAK, target.below());
 				}
 			}
 		} else if (simStandsOnHalf(target)) {
@@ -645,12 +645,12 @@ public final class PathFinder {
 				return; // higher than a jump reaches — usually a partial block adding to the step
 			}
 			if (simPassable(headroom)) {
-				add(node, landing, baseCost + BotSettings.JUMP_COST, NO_BREAK, null);
+				add(node, landing, baseCost + BotSettings.JUMP_COST.get(), NO_BREAK, null);
 			} else {
 				int ticks = breakTicks(headroom);
 				if (ticks >= 0) {
 					add(node, landing,
-							baseCost + BotSettings.JUMP_COST + ticks + BotSettings.BREAK_OVERHEAD,
+							baseCost + BotSettings.JUMP_COST.get() + ticks + BotSettings.BREAK_OVERHEAD.get(),
 							List.of(headroom), null);
 				}
 			}
@@ -673,15 +673,15 @@ public final class PathFinder {
 		if (climb > BotSettings.MAX_JUMP_HEIGHT) {
 			return;
 		}
-		double cost = baseCost + (climb > BotSettings.STEP_HEIGHT ? BotSettings.JUMP_COST : 0.0);
+		double cost = baseCost + (climb > BotSettings.STEP_HEIGHT ? BotSettings.JUMP_COST.get() : 0.0);
 		add(node, target, cost, NO_BREAK, null);
 	}
 
 	/** Walking off a ledge: find where we would land, and refuse drops that would hurt. */
 	private void tryDescend(Node node, BlockPos target, double baseCost) {
 		int scanLimit = canClutch
-				? Math.max(BotSettings.MAX_FALL_SCAN, BotSettings.MAX_CLUTCH_FALL)
-				: BotSettings.MAX_FALL_SCAN;
+				? Math.max(BotSettings.MAX_FALL_SCAN.get(), BotSettings.MAX_CLUTCH_FALL.get())
+				: BotSettings.MAX_FALL_SCAN.get();
 
 		for (int drop = 1; drop <= scanLimit; drop++) {
 			BlockPos feet = target.below(drop);
@@ -690,23 +690,23 @@ public final class PathFinder {
 			}
 			if (simWater(feet)) {
 				// Water cancels fall damage regardless of height.
-				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK, NO_BREAK, null);
+				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK.get(), NO_BREAK, null);
 				return;
 			}
 			if (simHalfSupport(feet)) {
 				// Landed on a slab. Its cell is the stance, and the drop is half a block shorter than
 				// the cell count suggests — close enough not to matter for fall damage.
-				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK, NO_BREAK, null);
+				add(node, feet, baseCost + drop * BotSettings.FALL_COST_PER_BLOCK.get(), NO_BREAK, null);
 				return;
 			}
 			if (simStandable(feet.below())) {
-				double fallCost = baseCost + drop * BotSettings.FALL_COST_PER_BLOCK;
+				double fallCost = baseCost + drop * BotSettings.FALL_COST_PER_BLOCK.get();
 				if (drop <= BotSettings.SAFE_FALL_DISTANCE) {
 					add(node, feet, fallCost, NO_BREAK, null);
-				} else if (canClutch && drop <= BotSettings.MAX_CLUTCH_FALL) {
+				} else if (canClutch && drop <= BotSettings.MAX_CLUTCH_FALL.get()) {
 					// Survivable with a water bucket on the way down. Priced well above a walk so
 					// it stays a shortcut worth taking, never the casual default.
-					add(node, feet, fallCost + BotSettings.CLUTCH_COST, NO_BREAK, null);
+					add(node, feet, fallCost + BotSettings.CLUTCH_COST.get(), NO_BREAK, null);
 				}
 				return; // ground found either way; deeper scanning is pointless
 			}
@@ -718,8 +718,8 @@ public final class PathFinder {
 		if (!simStandable(target.below())) {
 			return; // clearing the wall would leave us with nothing to walk on
 		}
-		List<BlockPos> toBreak = new ArrayList<>(BotSettings.MAX_BREAK_PER_MOVE);
-		double cost = baseCost + BotSettings.BREAK_OVERHEAD;
+		List<BlockPos> toBreak = new ArrayList<>(BotSettings.MAX_BREAK_PER_MOVE.get());
+		double cost = baseCost + BotSettings.BREAK_OVERHEAD.get();
 
 		for (BlockPos pos : List.of(target, target.above())) {
 			if (simPassable(pos)) {
@@ -733,7 +733,7 @@ public final class PathFinder {
 			toBreak.add(pos);
 		}
 
-		if (toBreak.isEmpty() || toBreak.size() > BotSettings.MAX_BREAK_PER_MOVE) {
+		if (toBreak.isEmpty() || toBreak.size() > BotSettings.MAX_BREAK_PER_MOVE.get()) {
 			return;
 		}
 		add(node, target, cost, toBreak, null);
@@ -758,7 +758,7 @@ public final class PathFinder {
 			return; // pillaring requires solid footing to jump from
 		}
 
-		double cost = BotSettings.PLACE_COST + BotSettings.JUMP_COST;
+		double cost = BotSettings.PLACE_COST.get() + BotSettings.JUMP_COST.get();
 		List<BlockPos> toBreak = NO_BREAK;
 
 		if (!simPassable(headroom)) {
@@ -766,7 +766,7 @@ public final class PathFinder {
 			if (ticks < 0) {
 				return;
 			}
-			cost += ticks + BotSettings.BREAK_OVERHEAD;
+			cost += ticks + BotSettings.BREAK_OVERHEAD.get();
 			toBreak = List.of(headroom);
 		}
 		add(node, from.above(), cost, toBreak, from);
@@ -841,7 +841,7 @@ public final class PathFinder {
 		if (ticks < 0) {
 			return;
 		}
-		add(node, below, ticks + BotSettings.BREAK_OVERHEAD, List.of(below), null);
+		add(node, below, ticks + BotSettings.BREAK_OVERHEAD.get(), List.of(below), null);
 	}
 
 	// ---------------------------------------------------------------- bookkeeping
@@ -859,7 +859,7 @@ public final class PathFinder {
 		// replan is free to pick the other one — so the bot turns around, walks back, and turns around
 		// again. Favouring the incumbent makes replanning a correction rather than a fresh opinion.
 		double effectiveCost = favoured.contains(key)
-				? cost * BotSettings.BACKTRACK_FAVOUR
+				? cost * BotSettings.BACKTRACK_FAVOUR.get()
 				: cost;
 		double g = parent.g + effectiveCost;
 

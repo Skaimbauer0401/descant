@@ -50,7 +50,7 @@ public interface Goal {
 		double alongZ = Math.abs(dz);
 		double diagonal = Math.min(alongX, alongZ);
 		double straight = Math.abs(alongX - alongZ);
-		return (diagonal * BotSettings.DIAGONAL_MULTIPLIER + straight) * BotSettings.SPRINT_COST;
+		return (diagonal * BotSettings.DIAGONAL_MULTIPLIER + straight) * BotSettings.SPRINT_COST.get();
 	}
 
 	/**
@@ -59,8 +59,8 @@ public interface Goal {
 	 */
 	static double verticalCost(int fromY, int toY) {
 		if (fromY > toY) {
-			return (fromY - toY) * BotSettings.FALL_COST_PER_BLOCK;
+			return (fromY - toY) * BotSettings.FALL_COST_PER_BLOCK.get();
 		}
-		return (toY - fromY) * BotSettings.JUMP_COST;
+		return (toY - fromY) * BotSettings.JUMP_COST.get();
 	}
 }

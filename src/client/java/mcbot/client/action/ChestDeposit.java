@@ -77,7 +77,7 @@ public final class ChestDeposit {
 		}
 
 		Vec3 centre = Vec3.atCenterOf(chest);
-		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH) {
+		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH.get()) {
 			cancel(minecraft);
 			return ActionState.OUT_OF_RANGE;
 		}

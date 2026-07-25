@@ -55,10 +55,10 @@ public final class WaterBucketClutch {
 		if (player.onGround() || player.isInWater() || minecraft.level == null) {
 			return false;
 		}
-		if (player.getDeltaMovement().y > -BotSettings.CLUTCH_MIN_FALL_SPEED) {
+		if (player.getDeltaMovement().y > -BotSettings.CLUTCH_MIN_FALL_SPEED.get()) {
 			return false; // rising, or only just started falling
 		}
-		if (player.fallDistance < BotSettings.CLUTCH_MIN_FALL_DISTANCE) {
+		if (player.fallDistance < BotSettings.CLUTCH_MIN_FALL_DISTANCE.get()) {
 			// Not yet a real fall. Jumps, pillar hops and single steps down all pass the speed test
 			// for a tick or two, and firing on those was hijacking the route constantly.
 			return false;
@@ -67,13 +67,13 @@ public final class WaterBucketClutch {
 			return false;
 		}
 		double drop = distanceToGround(minecraft, player);
-		if (drop < BotSettings.CLUTCH_MIN_REMAINING_DROP) {
+		if (drop < BotSettings.CLUTCH_MIN_REMAINING_DROP.get()) {
 			return false; // already nearly down; there is no time to place anything
 		}
 		// Require the fall to be comfortably damaging, not merely over the line. Landing at exactly
 		// the safe limit is survivable and far preferable to hijacking the route for a clutch.
 		return player.fallDistance + drop
-				> BotSettings.SAFE_FALL_DISTANCE + BotSettings.CLUTCH_DAMAGE_MARGIN;
+				> BotSettings.SAFE_FALL_DISTANCE + BotSettings.CLUTCH_DAMAGE_MARGIN.get();
 	}
 
 	public void begin() {
@@ -112,7 +112,7 @@ public final class WaterBucketClutch {
 		if (drop < 0) {
 			return ActionState.WORKING; // nothing below yet; keep falling and keep looking
 		}
-		if (drop > BotSettings.CLUTCH_TRIGGER_DISTANCE) {
+		if (drop > BotSettings.CLUTCH_TRIGGER_DISTANCE.get()) {
 			return ActionState.WORKING; // too early — the water would not be there when we arrive
 		}
 
@@ -145,7 +145,7 @@ public final class WaterBucketClutch {
 			return ActionState.DONE; // no empty bucket to collect with
 		}
 
-		HitResult target = player.pick(BotSettings.REACH, 0.0f, true);
+		HitResult target = player.pick(BotSettings.REACH.get(), 0.0f, true);
 		if (target instanceof BlockHitResult blockHit
 				&& !minecraft.level.getFluidState(blockHit.getBlockPos()).isEmpty()) {
 			minecraft.gameMode.useItem(player, InteractionHand.MAIN_HAND);

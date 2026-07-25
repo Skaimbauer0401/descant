@@ -46,7 +46,7 @@ public final class CombatAction {
 			return null;
 		}
 		// Creepers are picked up from further out so there is room to retreat before they blow.
-		double range = Math.max(BotSettings.COMBAT_ENGAGE_RANGE, BotSettings.CREEPER_DANGER_RANGE);
+		double range = Math.max(BotSettings.COMBAT_ENGAGE_RANGE.get(), BotSettings.CREEPER_DANGER_RANGE.get());
 		AABB box = player.getBoundingBox().inflate(range);
 
 		List<Monster> hostiles = minecraft.level.getEntitiesOfClass(Monster.class, box,
@@ -57,8 +57,8 @@ public final class CombatAction {
 		for (Monster hostile : hostiles) {
 			double distance = hostile.distanceTo(player);
 			boolean relevant = isDangerousCreeper(hostile)
-					? distance <= BotSettings.CREEPER_DANGER_RANGE
-					: distance <= BotSettings.COMBAT_ENGAGE_RANGE;
+					? distance <= BotSettings.CREEPER_DANGER_RANGE.get()
+					: distance <= BotSettings.COMBAT_ENGAGE_RANGE.get();
 			if (relevant && distance < bestDistance) {
 				bestDistance = distance;
 				best = hostile;
@@ -105,7 +105,7 @@ public final class CombatAction {
 		// Stand and fight rather than drifting past mid-swing.
 		input.forward(false).backward(false).left(false).right(false).sprint(false);
 
-		if (target.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE) {
+		if (target.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE.get()) {
 			setBlocking(minecraft, player, false);
 			return ActionState.DONE; // it backed off; get on with the journey
 		}
@@ -125,7 +125,7 @@ public final class CombatAction {
 
 		// Wait for the cooldown: a full-strength hit is worth several weak ones, and sprint-spam
 		// attacking is both less effective and the most obvious thing a bot can do.
-		if (player.getAttackStrengthScale(0.0f) < BotSettings.ATTACK_STRENGTH_THRESHOLD) {
+		if (player.getAttackStrengthScale(0.0f) < BotSettings.ATTACK_STRENGTH_THRESHOLD.getFloat()) {
 			return ActionState.WORKING;
 		}
 

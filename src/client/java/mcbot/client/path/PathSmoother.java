@@ -40,7 +40,7 @@ public final class PathSmoother {
 	 */
 	public static int furthestReachable(WorldView world, Vec3 from, Path path, int startIndex) {
 		int best = startIndex;
-		int limit = Math.min(path.size() - 1, startIndex + BotSettings.MAX_LOOKAHEAD_STEPS);
+		int limit = Math.min(path.size() - 1, startIndex + BotSettings.MAX_LOOKAHEAD_STEPS.get());
 		int feetY = Mth.floor(from.y);
 
 		for (int index = startIndex; index <= limit; index++) {
@@ -78,7 +78,7 @@ public final class PathSmoother {
 		double offsetX = -dz / distance * BotSettings.PLAYER_HALF_WIDTH;
 		double offsetZ = dx / distance * BotSettings.PLAYER_HALF_WIDTH;
 
-		int samples = (int) Math.ceil(distance / BotSettings.LINE_SAMPLE_SPACING);
+		int samples = (int) Math.ceil(distance / BotSettings.LINE_SAMPLE_SPACING.get());
 		int y = to.getY();
 
 		for (int sample = 0; sample <= samples; sample++) {

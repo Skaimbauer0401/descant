@@ -49,16 +49,16 @@ public final class EatAction {
 			return false;
 		}
 		int foodLevel = player.getFoodData().getFoodLevel();
-		if (foodLevel <= BotSettings.EAT_BELOW_FOOD_LEVEL) {
+		if (foodLevel <= BotSettings.EAT_BELOW_FOOD_LEVEL.get()) {
 			return true;
 		}
-		boolean wounded = player.getMaxHealth() - player.getHealth() >= BotSettings.HEAL_BY_EATING_THRESHOLD;
+		boolean wounded = player.getMaxHealth() - player.getHealth() >= BotSettings.HEAL_BY_EATING_THRESHOLD.getFloat();
 		return wounded && foodLevel < BotSettings.REGEN_FOOD_LEVEL;
 	}
 
 	/** Health is low enough that spending a golden apple is the right call. */
 	private static boolean needsEmergencyHeal(LocalPlayer player) {
-		return player.getHealth() <= BotSettings.EMERGENCY_HEAL_HEALTH
+		return player.getHealth() <= BotSettings.EMERGENCY_HEAL_HEALTH.getFloat()
 				&& InventoryManager.hasEmergencyFood(player);
 	}
 

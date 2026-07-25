@@ -71,7 +71,7 @@ public final class BlockBreaker {
 
 		Vec3 eye = player.getEyePosition();
 		Vec3 center = Vec3.atCenterOf(target);
-		if (eye.distanceTo(center) > BotSettings.REACH) {
+		if (eye.distanceTo(center) > BotSettings.REACH.get()) {
 			return ActionState.OUT_OF_RANGE;
 		}
 
@@ -83,7 +83,7 @@ public final class BlockBreaker {
 
 		double dx = center.x - eye.x;
 		double dz = center.z - eye.z;
-		if (dx * dx + dz * dz > BotSettings.YAW_DEADZONE_SQR) {
+		if (dx * dx + dz * dz > BotSettings.YAW_DEADZONE_SQR.get()) {
 			float desiredYaw = Steering.yawTowards(eye, center);
 			player.setYRot(Steering.approach(player.getYRot(), desiredYaw));
 			aimed &= Steering.angleDifference(player.getYRot(), desiredYaw) <= AIM_TOLERANCE;

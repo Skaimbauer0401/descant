@@ -1,5 +1,6 @@
 package mcbot.client.render;
 
+import mcbot.client.BotSettings;
 import mcbot.client.control.BotController;
 import mcbot.client.path.Path;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
@@ -54,7 +55,6 @@ public final class PathRenderer {
 	private static final int MAX_SEGMENTS = 1024;
 
 	private final BotController controller;
-	private boolean enabled = true;
 
 	public PathRenderer(BotController controller) {
 		this.controller = controller;
@@ -64,18 +64,8 @@ public final class PathRenderer {
 		LevelRenderEvents.BEFORE_GIZMOS.register(this::render);
 	}
 
-	/** @return the new state */
-	public boolean toggle() {
-		enabled = !enabled;
-		return enabled;
-	}
-
-	public boolean isEnabled() {
-		return enabled;
-	}
-
 	private void render(LevelRenderContext context) {
-		if (!enabled) {
+		if (!BotSettings.SHOW_PATH.get()) {
 			return;
 		}
 		Minecraft minecraft = Minecraft.getInstance();

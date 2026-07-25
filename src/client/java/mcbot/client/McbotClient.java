@@ -1,5 +1,6 @@
 package mcbot.client;
 
+import mcbot.client.api.BotApi;
 import mcbot.client.command.McbotCommand;
 import mcbot.client.control.BotController;
 import mcbot.client.render.PathRenderer;
@@ -20,21 +21,32 @@ import net.minecraft.network.chat.Component;
 public class McbotClient implements ClientModInitializer {
 
 	private static BotController controller;
+	private static BotApi api;
 
 	/** The active controller, or {@code null} before mod initialisation has run. */
 	public static BotController controller() {
 		return controller;
 	}
 
+	/**
+	 * The action API, or {@code null} before mod initialisation has run.
+	 *
+	 * <p>The single entry point for telling the bot to do anything — the chat commands go through it
+	 * today, and a language model will go through the same door.</p>
+	 */
+	public static BotApi api() {
+		return api;
+	}
+
 	@Override
 	public void onInitializeClient() {
 		controller = new BotController(McbotClient::sendChatMessage);
+		api = new BotApi(controller);
 
-		PathRenderer pathRenderer = new PathRenderer(controller);
-		pathRenderer.register();
+		new PathRenderer(controller).register();
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-				new McbotCommand(controller, pathRenderer).register(dispatcher));
+				new McbotCommand(api).register(dispatcher));
 
 		// START_CLIENT_TICK runs before the player's input is polled, so a decision made here is
 		// acted upon in the same tick rather than the next one.

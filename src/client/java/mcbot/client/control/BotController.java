@@ -119,9 +119,6 @@ public final class BotController {
 	/** The real destination, parked while the bot detours to collect something it needs. */
 	private Goal resumeGoal;
 
-	/** Water-bucket clutching is opt-in: it overrides the route, so it must be asked for. */
-	private boolean clutchEnabled;
-
 	/** When mining a block type, what we are hunting; {@code null} for an ordinary journey. */
 	private Block huntedBlock;
 
@@ -238,12 +235,12 @@ public final class BotController {
 		BlockPos found = BlockSearcher.findNearest(
 				minecraft.level,
 				BlockPos.containing(player.position()),
-				BotSettings.BLOCK_SEARCH_RADIUS,
+				BotSettings.BLOCK_SEARCH_RADIUS.get(),
 				state -> state.is(block));
 
 		if (found == null) {
 			huntedBlock = null;
-			message("No " + displayName + " within " + BotSettings.BLOCK_SEARCH_RADIUS
+			message("No " + displayName + " within " + BotSettings.BLOCK_SEARCH_RADIUS.get()
 					+ " blocks of here.");
 			return false;
 		}
@@ -281,7 +278,7 @@ public final class BotController {
 	private BlockPos approachPosition(Minecraft minecraft, LocalPlayer player, BlockPos target) {
 		WorldView world = new WorldView(minecraft.level);
 		BlockPos from = BlockPos.containing(player.position());
-		int radius = (int) Math.ceil(BotSettings.REACH);
+		int radius = (int) Math.ceil(BotSettings.REACH.get());
 
 		BlockPos best = null;
 		double bestDistance = Double.MAX_VALUE;
@@ -340,7 +337,7 @@ public final class BotController {
 
 	/** Whether a player standing at {@code feet} could reach {@code target}. */
 	private static boolean withinReach(BlockPos feet, BlockPos target) {
-		return eyeAt(feet).distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH;
+		return eyeAt(feet).distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get();
 	}
 
 	/**
@@ -353,7 +350,7 @@ public final class BotController {
 	 */
 	public boolean huntForEntity(Minecraft minecraft, LocalPlayer player, EntityType<?> type,
 			String displayName, boolean execute) {
-		AABB box = player.getBoundingBox().inflate(BotSettings.ENTITY_SEARCH_RADIUS);
+		AABB box = player.getBoundingBox().inflate(BotSettings.ENTITY_SEARCH_RADIUS.get());
 		Entity nearest = null;
 		double nearestDistance = Double.MAX_VALUE;
 
@@ -369,7 +366,7 @@ public final class BotController {
 		if (nearest == null) {
 			huntedType = null;
 			huntedEntity = null;
-			message("No " + displayName + " within " + (int) BotSettings.ENTITY_SEARCH_RADIUS
+			message("No " + displayName + " within " + (int) BotSettings.ENTITY_SEARCH_RADIUS.get()
 					+ " blocks of here.");
 			return false;
 		}
@@ -424,7 +421,7 @@ public final class BotController {
 
 		BlockPos where = BlockPos.containing(huntedEntity.position());
 		if (goal == null
-				|| where.distSqr(goal.approximatePosition()) > BotSettings.RETARGET_DISTANCE_SQR) {
+				|| where.distSqr(goal.approximatePosition()) > BotSettings.RETARGET_DISTANCE_SQR.get()) {
 			goal = new GoalNear(where, ENTITY_GOAL_RADIUS);
 			retarget(minecraft);
 		}
@@ -463,7 +460,7 @@ public final class BotController {
 		if (retargetSearch == null) {
 			return;
 		}
-		switch (retargetSearch.advance(BotSettings.SEARCH_BUDGET_NANOS)) {
+		switch (retargetSearch.advance(BotSettings.searchBudgetNanos())) {
 			case SEARCHING -> {
 				// keep chewing next tick, while we walk the old route
 			}
@@ -525,16 +522,6 @@ public final class BotController {
 	/** The goal in words, for chat. */
 	private String describeGoal() {
 		return goal == null ? "?" : goal.describe();
-	}
-
-	/** @return the new state */
-	public boolean toggleClutch() {
-		clutchEnabled = !clutchEnabled;
-		return clutchEnabled;
-	}
-
-	public boolean isClutchEnabled() {
-		return clutchEnabled;
 	}
 
 	/** Remaining nodes on the current path, for the status display. */
@@ -710,7 +697,7 @@ public final class BotController {
 			tickClutch(minecraft, player);
 			return true;
 		}
-		if (clutchEnabled && WaterBucketClutch.isNeeded(minecraft, player)) {
+		if (BotSettings.CLUTCH_ENABLED.get() && WaterBucketClutch.isNeeded(minecraft, player)) {
 			// Drop any held-use interaction before the clutch equips the bucket — a raised shield or an
 			// eat still holding the use key would fire the bucket the instant it reaches the main hand,
 			// dumping the water mid-air and wasting the clutch.
@@ -722,7 +709,7 @@ public final class BotController {
 		}
 
 		// 2. Running out of air.
-		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL) {
+		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL.get()) {
 			releaseInteractions(minecraft, player); // same reason: nothing held while surfacing
 			swimForAir(minecraft, player);
 			return true;
@@ -790,7 +777,7 @@ public final class BotController {
 		if (!huntExecute || !(huntedEntity instanceof LivingEntity quarry) || !quarry.isAlive()) {
 			return false;
 		}
-		if (quarry.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE) {
+		if (quarry.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE.get()) {
 			return false; // not in reach yet; keep walking
 		}
 		if (status == Status.EATING) {
@@ -846,7 +833,7 @@ public final class BotController {
 		BlockPos air = AirFinder.findNearestBreathable(
 				new WorldView(minecraft.level),
 				BlockPos.containing(player.position()),
-				BotSettings.AIR_SEARCH_NODES);
+				BotSettings.AIR_SEARCH_NODES.get());
 
 		if (air == null) {
 			input.jump(true); // nothing found in range; upward is the best remaining guess
@@ -897,7 +884,7 @@ public final class BotController {
 		if (mineTarget == null && huntedEntity == null) {
 			return false;
 		}
-		if (InventoryManager.fullness(player) < BotSettings.DEPOSIT_FULLNESS
+		if (InventoryManager.fullness(player) < BotSettings.DEPOSIT_FULLNESS.get()
 				|| !InventoryManager.hasHaul(player)) {
 			return false;
 		}
@@ -910,7 +897,7 @@ public final class BotController {
 		mineTargetBlock = null;
 
 		// Stand next to the chest, not on it. Anywhere within arm's reach will do.
-		goal = new GoalNear(depositChest, (int) BotSettings.REACH - 1);
+		goal = new GoalNear(depositChest, (int) BotSettings.REACH.get() - 1);
 		message("Inventory full — banking the haul at " + format(depositChest) + ".");
 		replan(minecraft);
 		return true;
@@ -983,7 +970,7 @@ public final class BotController {
 		// are) before planning; a long committed fall falls through the timeout and plans anyway.
 		if (search == null && !player.onGround() && !player.isInWater()) {
 			input.forward(false).backward(false).left(false).right(false).sprint(false).jump(false);
-			if (++airborneWait < BotSettings.AIRBORNE_PLAN_WAIT) {
+			if (++airborneWait < BotSettings.AIRBORNE_PLAN_WAIT.get()) {
 				return;
 			}
 		}
@@ -993,7 +980,7 @@ public final class BotController {
 			search = newSearch(minecraft, player, planStart(minecraft, player), favouredRoute);
 		}
 
-		PathFinder.State result = search.advance(BotSettings.SEARCH_BUDGET_NANOS);
+		PathFinder.State result = search.advance(BotSettings.searchBudgetNanos());
 		switch (result) {
 			case SEARCHING -> {
 				// keep chewing next tick
@@ -1008,7 +995,7 @@ public final class BotController {
 			}
 			case FAILED -> {
 				search = null;
-				if (++planFailures < BotSettings.MAX_REPLAN_FAILURES) {
+				if (++planFailures < BotSettings.MAX_REPLAN_FAILURES.get()) {
 					cooldown = REPLAN_COOLDOWN_TICKS;
 				} else if (collecting) {
 					abandonCollecting(minecraft); // no route to the loot; it is not worth failing over
@@ -1120,7 +1107,7 @@ public final class BotController {
 			if (path.reachesGoal() || goal == null) {
 				return; // this route already arrives; there is no continuation to plan
 			}
-			if (path.remainingTicks(stepIndex) > BotSettings.PLANNING_TICK_LOOKAHEAD) {
+			if (path.remainingTicks(stepIndex) > BotSettings.PLANNING_TICK_LOOKAHEAD.get()) {
 				return; // plenty of route left; no need to think about the next segment yet
 			}
 			BlockPos from = path.destination();
@@ -1132,7 +1119,7 @@ public final class BotController {
 			lookaheadSearch = newSearch(minecraft, player, from, Set.of());
 		}
 
-		switch (lookaheadSearch.advance(BotSettings.SEARCH_BUDGET_NANOS)) {
+		switch (lookaheadSearch.advance(BotSettings.searchBudgetNanos())) {
 			case SEARCHING -> {
 				// keep chewing next tick, while we walk
 			}
@@ -1159,7 +1146,7 @@ public final class BotController {
 				InventoryManager.snapshot(player),
 				allowBreak,
 				allowPlace,
-				clutchEnabled && InventoryManager.hasWaterBucket(player),
+				BotSettings.CLUTCH_ENABLED.get() && InventoryManager.hasWaterBucket(player),
 				allowParkour,
 				favoured);
 	}
@@ -1193,12 +1180,12 @@ public final class BotController {
 				position.distanceTo(Vec3.atBottomCenterOf(step.pos())),
 				position.distanceTo(Vec3.atBottomCenterOf(step.from())));
 
-		if (distance > BotSettings.PATH_ABANDON_DISTANCE) {
+		if (distance > BotSettings.PATH_ABANDON_DISTANCE.get()) {
 			ticksOffPath = 0;
 			return true;
 		}
-		if (distance > BotSettings.PATH_DRIFT_DISTANCE) {
-			return ++ticksOffPath > BotSettings.MAX_TICKS_OFF_PATH;
+		if (distance > BotSettings.PATH_DRIFT_DISTANCE.get()) {
+			return ++ticksOffPath > BotSettings.MAX_TICKS_OFF_PATH.get();
 		}
 		ticksOffPath = 0;
 		return false;
@@ -1246,7 +1233,7 @@ public final class BotController {
 		BlockPos direction = jump.direction();
 
 		// An ascending jump spends part of its arc climbing, so it always needs the sprint.
-		boolean sprint = jump.parkourDistance() >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE
+		boolean sprint = jump.parkourDistance() >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get()
 				|| jump.parkourAscend();
 
 		if (!player.onGround()) {
@@ -1379,8 +1366,8 @@ public final class BotController {
 		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
 
 		float yawError = Steering.angleDifference(player.getYRot(), desiredYaw);
-		input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE);
-		input.sprint(sprint && !player.isInWater() && yawError < BotSettings.SPRINT_ANGLE_THRESHOLD);
+		input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE.getFloat());
+		input.sprint(sprint && !player.isInWater() && yawError < BotSettings.SPRINT_ANGLE_THRESHOLD.getFloat());
 	}
 
 	/**
@@ -1401,7 +1388,7 @@ public final class BotController {
 	private int advanceProgress(Minecraft minecraft, LocalPlayer player) {
 		BlockPos feet = feetPosition(player);
 		Vec3 position = player.position();
-		int limit = Math.min(path.size() - 1, stepIndex + BotSettings.MAX_LOOKAHEAD_STEPS);
+		int limit = Math.min(path.size() - 1, stepIndex + BotSettings.MAX_LOOKAHEAD_STEPS.get());
 
 		int nearest = stepIndex;
 		double nearestDistance = position.distanceToSqr(
@@ -1424,7 +1411,7 @@ public final class BotController {
 
 		// Close enough to the nearest node counts as having reached it, so a smoothed run that skims
 		// past a node still advances instead of stalling on it.
-		double arrival = BotSettings.NODE_ARRIVAL_DISTANCE * BotSettings.NODE_ARRIVAL_DISTANCE;
+		double arrival = BotSettings.NODE_ARRIVAL_DISTANCE.get() * BotSettings.NODE_ARRIVAL_DISTANCE.get();
 		return nearestDistance < arrival ? nearest + 1 : nearest;
 	}
 
@@ -1508,7 +1495,7 @@ public final class BotController {
 			return null;
 		}
 		return ItemScanner.findNear(
-				minecraft.level, collectAnchor, BotSettings.COLLECT_RADIUS, stack -> true);
+				minecraft.level, collectAnchor, BotSettings.COLLECT_RADIUS.get(), stack -> true);
 	}
 
 	/**
@@ -1527,7 +1514,7 @@ public final class BotController {
 		if (drop == null) {
 			// Drops appear a tick or two after the block breaks, so an instant "nothing here"
 			// would always be wrong. Wait briefly before concluding there is nothing.
-			if (collectTicks > BotSettings.COLLECT_GRACE_TICKS) {
+			if (collectTicks > BotSettings.COLLECT_GRACE_TICKS.get()) {
 				collecting = false;
 				continueHunt(minecraft);
 			}
@@ -1634,21 +1621,21 @@ public final class BotController {
 		double heightDelta = target.y - position.y;
 		double dx = target.x - position.x;
 		double dz = target.z - position.z;
-		boolean hasHeading = dx * dx + dz * dz > BotSettings.YAW_DEADZONE_SQR;
+		boolean hasHeading = dx * dx + dz * dz > BotSettings.YAW_DEADZONE_SQR.get();
 
 		// Ease the pitch back to level after mining or building looked up/down.
 		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
 
 		if (hasHeading) {
 			float desiredYaw = Steering.yawTowards(position, target);
-			player.setYRot(Steering.approach(player.getYRot(), desiredYaw, BotSettings.NAV_TURN_PER_TICK));
+			player.setYRot(Steering.approach(player.getYRot(), desiredYaw, BotSettings.NAV_TURN_PER_TICK.getFloat()));
 			float yawError = Steering.angleDifference(player.getYRot(), desiredYaw);
 
 			// Turn on the spot rather than walking off at a wild angle and swinging back.
-			input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE);
+			input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE.getFloat());
 
 			input.sprint(shouldSprint(minecraft, player)
-					&& yawError < BotSettings.SPRINT_ANGLE_THRESHOLD);
+					&& yawError < BotSettings.SPRINT_ANGLE_THRESHOLD.getFloat());
 		} else {
 			// Directly above or below us: there is no meaningful heading to take, and computing one
 			// from the near-zero horizontal delta would just spin the view on the spot.
@@ -1697,11 +1684,11 @@ public final class BotController {
 		}
 		// A jump coming up decides its own run-up: the long jump must reach the launch block at full
 		// speed, the short one must not or it overshoots the landing.
-		int jump = parkourWithin(BotSettings.PARKOUR_RUNWAY_STEPS);
+		int jump = parkourWithin(BotSettings.PARKOUR_RUNWAY_STEPS.get());
 		if (jump > 0) {
-			return jump >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE;
+			return jump >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get();
 		}
-		if (remainingSteps() <= BotSettings.MIN_STEPS_FOR_SPRINT) {
+		if (remainingSteps() <= BotSettings.MIN_STEPS_FOR_SPRINT.get()) {
 			return false; // nowhere left to sprint to; charging past the last node means doubling back
 		}
 		if (stepIndex + 1 >= path.size()) {
@@ -1796,7 +1783,7 @@ public final class BotController {
 	 */
 	private double movementBudget() {
 		double estimate = path != null && stepIndex < path.size() ? path.step(stepIndex).cost() : 0.0;
-		return estimate + BotSettings.MOVEMENT_TIMEOUT_TICKS;
+		return estimate + BotSettings.MOVEMENT_TIMEOUT_TICKS.get();
 	}
 
 	/**
@@ -1828,10 +1815,10 @@ public final class BotController {
 		// towards — and then give up on it.
 		double distance = goal.heuristic(feetPosition(player));
 
-		if (distance < bestGoalDistance - BotSettings.STUCK_PROGRESS_MARGIN) {
+		if (distance < bestGoalDistance - BotSettings.STUCK_PROGRESS_MARGIN.get()) {
 			bestGoalDistance = distance;
 			fruitlessReplans = 0;
-		} else if (++fruitlessReplans >= BotSettings.MAX_STUCK_REPLANS) {
+		} else if (++fruitlessReplans >= BotSettings.MAX_STUCK_REPLANS.get()) {
 			fail(minecraft, "Stuck and not getting closer to " + describeGoal() + " — giving up.");
 			return;
 		}
@@ -1890,8 +1877,8 @@ public final class BotController {
 		double dx = target.x - position.x;
 		double dz = target.z - position.z;
 		double dy = target.y - position.y;
-		return dx * dx + dz * dz < BotSettings.GOAL_TOLERANCE * BotSettings.GOAL_TOLERANCE
-				&& Math.abs(dy) < BotSettings.GOAL_VERTICAL_TOLERANCE;
+		return dx * dx + dz * dz < BotSettings.GOAL_TOLERANCE.get() * BotSettings.GOAL_TOLERANCE.get()
+				&& Math.abs(dy) < BotSettings.GOAL_VERTICAL_TOLERANCE.get();
 	}
 
 	/**
@@ -1921,7 +1908,7 @@ public final class BotController {
 			return feet;
 		}
 		WorldView world = new WorldView(minecraft.level);
-		for (int drop = 0; drop <= BotSettings.MAX_FALL_SCAN; drop++) {
+		for (int drop = 0; drop <= BotSettings.MAX_FALL_SCAN.get(); drop++) {
 			BlockPos candidate = feet.below(drop);
 			if (world.isKnown(candidate.below()) && world.isStandable(candidate.below())
 					&& world.fitsAt(candidate)) {
@@ -1978,7 +1965,7 @@ public final class BotController {
 			return false; // already fetching something; don't stack detours
 		}
 		var dropped = ItemScanner.findNearby(
-				minecraft.level, player, wanted, BotSettings.ITEM_SEARCH_RADIUS);
+				minecraft.level, player, wanted, BotSettings.ITEM_SEARCH_RADIUS.get());
 		if (dropped == null) {
 			return false;
 		}

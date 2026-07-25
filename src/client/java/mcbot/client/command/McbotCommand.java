@@ -1,40 +1,40 @@
 package mcbot.client.command;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
-import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
+import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import mcbot.client.BotSettings;
-import mcbot.client.control.BotController;
-import mcbot.client.path.BlockSearcher;
-import mcbot.client.path.goal.Goal;
-import mcbot.client.path.goal.GoalBlock;
-import mcbot.client.path.goal.GoalXZ;
-import mcbot.client.path.goal.GoalYLevel;
-import mcbot.client.render.PathRenderer;
+import mcbot.client.api.Action;
+import mcbot.client.api.ActionResult;
+import mcbot.client.api.Arguments;
+import mcbot.client.api.BotApi;
+import mcbot.client.inventory.ChestSource;
+import mcbot.client.settings.Setting;
+import mcbot.client.settings.SettingRegistry;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.commands.SharedSuggestionProvider;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.BarrelBlock;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.ChestBlock;
 
 /**
- * The whole command surface, under a single {@code /mcbot} root.
+ * The {@code /mcbot} chat commands.
  *
  * <pre>
  *   /mcbot goto &lt;x&gt; &lt;y&gt; &lt;z&gt;        travel to that block, mining and bridging as needed
@@ -45,27 +45,30 @@ import net.minecraft.world.level.block.ChestBlock;
  *                                          or kill it, sweep up the drops and move on to the
  *                                          next; the default is false, which simply travels
  *                                          there once
- *   /mcbot chest [off]             remember the nearest chest to bank the haul in, or forget it
+ *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
+ *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
+ *   /mcbot api                     write the action menu out as JSON
  *   /mcbot stop | status | path | clutch
  * </pre>
+ *
+ * <p>This class only parses. Every command ends in a call to {@link BotApi}, and the sentence the
+ * player sees is the one the action gave back — so the chat commands and a model driving the bot go
+ * down the same path and cannot come to disagree about what {@code find} means.</p>
+ *
+ * <p>The Brigadier tree is still written by hand rather than generated from the action menu, because
+ * the two want different shapes. A model is best served by named arguments; at a keyboard it is
+ * quicker to type three numbers and let their meaning follow from how many there were.</p>
  *
  * <p>Vanilla block, entity and coordinate argument types all resolve against a server-side command
  * source, which a client command does not have — hence plain integers and a string for the target.
  * Tab completion is supplied straight from the registries, so it behaves the same to the player.</p>
- *
- * <p>The target and the execute flag share one greedy argument and are split by hand. A greedy
- * string is needed because block ids contain a colon, which Brigadier's {@code word()} rejects, and
- * a greedy argument cannot be followed by another — so the trailing {@code true}/{@code false} is
- * peeled off the end instead.</p>
  */
 public final class McbotCommand {
 
-	private final BotController controller;
-	private final PathRenderer pathRenderer;
+	private final BotApi api;
 
-	public McbotCommand(BotController controller, PathRenderer pathRenderer) {
-		this.controller = controller;
-		this.pathRenderer = pathRenderer;
+	public McbotCommand(BotApi api) {
+		this.api = api;
 	}
 
 	public void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
@@ -80,13 +83,19 @@ public final class McbotCommand {
 												BuiltInRegistries.ENTITY_TYPE.keySet().stream()),
 										builder))
 								.executes(this::find)))
-				.then(ClientCommands.literal("chest")
-						.executes(this::rememberChest)
-						.then(ClientCommands.literal("off").executes(this::forgetChest)))
-				.then(ClientCommands.literal("stop").executes(this::stop))
-				.then(ClientCommands.literal("status").executes(this::status))
-				.then(ClientCommands.literal("path").executes(this::togglePath))
-				.then(ClientCommands.literal("clutch").executes(this::toggleClutch)));
+				.then(chest())
+				.then(set())
+				.then(ClientCommands.literal("api").executes(this::dumpApi))
+				.then(ClientCommands.literal("stop")
+						.executes(context -> run(context, "stop", Arguments.none())))
+				.then(ClientCommands.literal("status")
+						.executes(context -> run(context, "status", Arguments.none())))
+				.then(ClientCommands.literal("path")
+						.executes(context -> run(context, "toggle",
+								Arguments.of("name", BotSettings.SHOW_PATH.name()))))
+				.then(ClientCommands.literal("clutch")
+						.executes(context -> run(context, "toggle",
+								Arguments.of("name", BotSettings.CLUTCH_ENABLED.name())))));
 	}
 
 	// ---------------------------------------------------------------- travel
@@ -99,189 +108,157 @@ public final class McbotCommand {
 	 * second number means different things depending on whether a third follows — Brigadier has one
 	 * node per position, so the interpretation has to happen in the handler.</p>
 	 */
-	private RequiredArgumentBuilder<FabricClientCommandSource, Integer> coordinates(
-			boolean allowBuilding) {
+	private RequiredArgumentBuilder<FabricClientCommandSource, Integer> coordinates(boolean build) {
 		return ClientCommands.<Integer>argument("first", IntegerArgumentType.integer())
-				.executes(context -> travelToLevel(context, allowBuilding))
+				.executes(context -> run(context, "gotoLevel", Arguments.of(
+						"y", IntegerArgumentType.getInteger(context, "first"),
+						"build", build)))
 				.then(ClientCommands.<Integer>argument("second", IntegerArgumentType.integer())
-						.executes(context -> travelToColumn(context, allowBuilding))
+						.executes(context -> run(context, "goto", Arguments.of(
+								"x", IntegerArgumentType.getInteger(context, "first"),
+								"z", IntegerArgumentType.getInteger(context, "second"),
+								"build", build)))
 						.then(ClientCommands.<Integer>argument("third", IntegerArgumentType.integer())
-								.executes(context -> travel(context, allowBuilding))));
+								.executes(context -> run(context, "goto", Arguments.of(
+										"x", IntegerArgumentType.getInteger(context, "first"),
+										"y", IntegerArgumentType.getInteger(context, "second"),
+										"z", IntegerArgumentType.getInteger(context, "third"),
+										"build", build)))));
 	}
 
-	/** Three numbers: an exact block. */
-	private int travel(CommandContext<FabricClientCommandSource> context, boolean allowBuilding) {
-		BlockPos goal = new BlockPos(
-				IntegerArgumentType.getInteger(context, "first"),
-				IntegerArgumentType.getInteger(context, "second"),
-				IntegerArgumentType.getInteger(context, "third"));
+	private int find(CommandContext<FabricClientCommandSource> context) {
+		String raw = StringArgumentType.getString(context, "target").trim();
 
-		return start(context, new GoalBlock(goal), allowBuilding);
-	}
-
-	/**
-	 * Two numbers: an X/Z column at whatever height the ground is.
-	 *
-	 * <p>The right form for travelling any real distance. Naming an exact Y a thousand blocks away
-	 * means guessing the terrain height, and guessing wrong makes the bot tunnel down to your number
-	 * or pillar up to it on arrival.</p>
-	 */
-	private int travelToColumn(CommandContext<FabricClientCommandSource> context,
-			boolean allowBuilding) {
-		LocalPlayer player = context.getSource().getClient().player;
-		int referenceY = player == null ? 64 : (int) Math.floor(player.getY());
-
-		return start(context, new GoalXZ(
-				IntegerArgumentType.getInteger(context, "first"),
-				IntegerArgumentType.getInteger(context, "second"),
-				referenceY), allowBuilding);
-	}
-
-	/** One number: a height, reached anywhere — digging down to it, or climbing back up. */
-	private int travelToLevel(CommandContext<FabricClientCommandSource> context,
-			boolean allowBuilding) {
-		LocalPlayer player = context.getSource().getClient().player;
-		BlockPos column = player == null ? BlockPos.ZERO : BlockPos.containing(player.position());
-
-		return start(context, new GoalYLevel(
-				IntegerArgumentType.getInteger(context, "first"), column), allowBuilding);
-	}
-
-	private int start(CommandContext<FabricClientCommandSource> context, Goal goal,
-			boolean allowBuilding) {
-		controller.navigateTo(goal, allowBuilding, allowBuilding);
-		feedback(context, "Heading to " + goal.describe()
-				+ (allowBuilding ? "." : " (movement only).")
-				+ " Press any movement key to cancel.");
-		return 1;
+		// Peel an optional trailing true/false off the end. A greedy string is needed because block
+		// ids contain a colon, which Brigadier's word() rejects, and a greedy argument cannot be
+		// followed by another — so the flag is split off by hand rather than parsed as its own node.
+		String execute = null;
+		int lastSpace = raw.lastIndexOf(' ');
+		if (lastSpace > 0) {
+			String tail = raw.substring(lastSpace + 1).toLowerCase(Locale.ROOT);
+			if (tail.equals("true") || tail.equals("false")) {
+				execute = tail;
+				raw = raw.substring(0, lastSpace).trim();
+			}
+		}
+		return run(context, "find", Arguments.of("target", raw, "execute", execute));
 	}
 
 	// ---------------------------------------------------------------- banking
 
 	/**
-	 * Remembers the nearest container as the place to bank the haul.
+	 * {@code /mcbot chest [looking|nearest|off]}.
 	 *
-	 * <p>Nearest-to-the-player rather than a typed coordinate: you set it by standing next to the
-	 * chest you mean, which is both quicker and harder to get wrong than reading three numbers off the
-	 * debug screen.</p>
+	 * <p>The sources are spelled out as literals rather than left to a free string so that they tab
+	 * complete, which for most people is the only documentation of them they will ever read. Bare
+	 * {@code /mcbot chest} falls back to the {@code chestSource} setting.</p>
 	 */
-	private int rememberChest(CommandContext<FabricClientCommandSource> context) {
-		Minecraft minecraft = context.getSource().getClient();
-		LocalPlayer player = minecraft.player;
-		if (player == null || minecraft.level == null) {
-			return 0;
-		}
+	private LiteralArgumentBuilder<FabricClientCommandSource> chest() {
+		LiteralArgumentBuilder<FabricClientCommandSource> node = ClientCommands.literal("chest")
+				.executes(context -> run(context, "chest", Arguments.none()))
+				.then(ClientCommands.literal("off")
+						.executes(context -> run(context, "chest", Arguments.of("source", "off"))));
 
-		BlockPos found = BlockSearcher.findNearest(
-				minecraft.level,
-				BlockPos.containing(player.position()),
-				BotSettings.CHEST_SEARCH_RADIUS,
-				state -> state.getBlock() instanceof ChestBlock
-						|| state.getBlock() instanceof BarrelBlock);
-
-		if (found == null) {
-			feedback(context, "No chest or barrel within " + BotSettings.CHEST_SEARCH_RADIUS
-					+ " blocks. Stand nearer to one.");
-			return 0;
+		for (ChestSource source : ChestSource.values()) {
+			node = node.then(ClientCommands.literal(source.key())
+					.executes(context -> run(context, "chest", Arguments.of("source", source.key()))));
 		}
-		controller.setDepositChest(found);
-		feedback(context, "Banking the haul at " + found.getX() + ", " + found.getY() + ", "
-				+ found.getZ() + " once the inventory fills up.");
-		return 1;
+		return node;
 	}
 
-	private int forgetChest(CommandContext<FabricClientCommandSource> context) {
-		controller.setDepositChest(null);
-		feedback(context, "Banking off — the bot will keep everything it mines.");
-		return 1;
+	// ---------------------------------------------------------------- settings
+
+	/** {@code /mcbot set [<name>] [<value>]} — list what has changed, read one, or change one. */
+	private LiteralArgumentBuilder<FabricClientCommandSource> set() {
+		return ClientCommands.literal("set")
+				.executes(context -> run(context, "set", Arguments.none()))
+				.then(ClientCommands.<String>argument("name", StringArgumentType.word())
+						.suggests((context, builder) -> SharedSuggestionProvider.suggest(
+								SettingRegistry.all().stream().map(Setting::name), builder))
+						.executes(context -> run(context, "set", Arguments.of(
+								"name", StringArgumentType.getString(context, "name"))))
+						.then(ClientCommands.<String>argument("value", StringArgumentType.greedyString())
+								.suggests(McbotCommand::suggestValues)
+								.executes(context -> run(context, "set", Arguments.of(
+										"name", StringArgumentType.getString(context, "name"),
+										"value", StringArgumentType.getString(context, "value"))))));
 	}
 
-	// ---------------------------------------------------------------- find
+	/**
+	 * Offers a setting's accepted values.
+	 *
+	 * <p>For an on/off or multiple-choice setting those are the whole answer. For a number there is
+	 * nothing to enumerate, so the current value is offered instead — which is the useful thing to
+	 * start from when nudging one.</p>
+	 */
+	private static CompletableFuture<Suggestions> suggestValues(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		Setting setting = SettingRegistry.get(StringArgumentType.getString(context, "name"));
+		if (setting == null) {
+			return builder.buildFuture();
+		}
+		Stream<String> options = switch (setting.type()) {
+			case "boolean" -> Stream.of("true", "false");
+			// domain() reads "one of: looking (…), nearest (…)"; the key is the word before the gloss.
+			case "choice" -> Stream.of(setting.domain().replace("one of: ", "").split(", "))
+					.map(option -> option.split(" ")[0]);
+			default -> Stream.of(setting.asString());
+		};
+		return SharedSuggestionProvider.suggest(options, builder);
+	}
 
-	private int find(CommandContext<FabricClientCommandSource> context) {
-		String raw = StringArgumentType.getString(context, "target").trim();
+	// ---------------------------------------------------------------- the action menu
 
-		// Peel an optional trailing true/false off the end. Defaults to false — plain `find` just
-		// travels to the thing, and mining or killing it has to be asked for explicitly.
-		boolean execute = false;
-		int lastSpace = raw.lastIndexOf(' ');
-		if (lastSpace > 0) {
-			String tail = raw.substring(lastSpace + 1).toLowerCase(Locale.ROOT);
-			if (tail.equals("true") || tail.equals("false")) {
-				execute = tail.equals("true");
-				raw = raw.substring(0, lastSpace).trim();
+	/**
+	 * Lists the actions in chat and writes the full menu out as JSON.
+	 *
+	 * <p>That JSON is what a language model gets handed to work out what the bot can do. Having it on
+	 * disk means it can be read, diffed and pasted into a prompt without the game running — which is
+	 * how you notice an action's description is too vague to act on before a model does.</p>
+	 */
+	private int dumpApi(CommandContext<FabricClientCommandSource> context) {
+		for (Action action : api.actions().all()) {
+			String arguments = action.parameters().stream()
+					.map(parameter -> parameter.required()
+							? " <" + parameter.name() + ">"
+							: " [" + parameter.name() + "]")
+					.reduce("", String::concat);
+			feedback(context, action.name() + arguments);
+		}
+
+		Path file = Minecraft.getInstance().gameDirectory.toPath().resolve("mcbot-actions.json");
+		try {
+			Files.writeString(file,
+					new GsonBuilder().setPrettyPrinting().create().toJson(api.actions().schema()),
+					StandardCharsets.UTF_8);
+			feedback(context, api.actions().all().size() + " actions, written to " + file + ".");
+			return 1;
+		} catch (IOException e) {
+			context.getSource().sendError(Component.literal(
+					"[mcbot] Couldn't write the action menu: " + e.getMessage()));
+			return 0;
+		}
+	}
+
+	// ---------------------------------------------------------------- plumbing
+
+	/**
+	 * Runs an action and reports what it said.
+	 *
+	 * <p>A {@code quiet} result is one the bot has already announced through its own chat messages;
+	 * printing it again would say the same thing twice, one line after the other.</p>
+	 */
+	private int run(CommandContext<FabricClientCommandSource> context, String action,
+			Arguments arguments) {
+		ActionResult result = api.invoke(action, arguments);
+		if (!result.quiet()) {
+			if (result.ok()) {
+				feedback(context, result.message());
+			} else {
+				context.getSource().sendError(Component.literal("[mcbot] " + result.message()));
 			}
 		}
-
-		Identifier id = Identifier.tryParse(raw.contains(":") ? raw : "minecraft:" + raw);
-		if (id == null) {
-			context.getSource().sendError(
-					Component.literal("[mcbot] '" + raw + "' is not a valid name."));
-			return 0;
-		}
-
-		Minecraft minecraft = context.getSource().getClient();
-		LocalPlayer player = context.getSource().getPlayer();
-		if (minecraft.level == null || player == null) {
-			return 0;
-		}
-
-		// Blocks first, then mobs: the registries do not overlap and blocks are the common request.
-		Optional<Block> block = BuiltInRegistries.BLOCK.getOptional(id);
-		if (block.isPresent() && (block.get() != Blocks.AIR || raw.endsWith("air"))) {
-			controller.huntFor(minecraft, player, block.get(),
-					block.get().getName().getString(), execute);
-			return 1;
-		}
-
-		Optional<EntityType<?>> type = BuiltInRegistries.ENTITY_TYPE.getOptional(id);
-		if (type.isPresent()) {
-			controller.huntForEntity(minecraft, player, type.get(),
-					type.get().getDescription().getString(), execute);
-			return 1;
-		}
-
-		context.getSource().sendError(
-				Component.literal("[mcbot] No block or mob called '" + raw + "'."));
-		return 0;
-	}
-
-	// ---------------------------------------------------------------- toggles and status
-
-	private int stop(CommandContext<FabricClientCommandSource> context) {
-		controller.stop(context.getSource().getClient());
-		feedback(context, "Stopped.");
-		return 1;
-	}
-
-	private int togglePath(CommandContext<FabricClientCommandSource> context) {
-		feedback(context, "Path display " + (pathRenderer.toggle() ? "shown." : "hidden."));
-		return 1;
-	}
-
-	private int toggleClutch(CommandContext<FabricClientCommandSource> context) {
-		feedback(context, "Water-bucket clutch " + (controller.toggleClutch()
-				? "enabled — long drops are now survivable." : "disabled."));
-		return 1;
-	}
-
-	private int status(CommandContext<FabricClientCommandSource> context) {
-		StringBuilder text = new StringBuilder(controller.status().toString());
-		BlockPos goal = controller.goal();
-		if (goal != null) {
-			text.append(" → ").append(goal.getX()).append(", ")
-					.append(goal.getY()).append(", ").append(goal.getZ());
-		}
-		switch (controller.status()) {
-			case PLANNING -> text.append(" (searched ").append(controller.searchedNodes())
-					.append(" nodes)");
-			case FOLLOWING, BREAKING, PLACING, MINING -> text.append(" (")
-					.append(controller.remainingSteps()).append(" steps left)");
-			default -> {
-			}
-		}
-		feedback(context, text.toString());
-		return 1;
+		return result.ok() ? 1 : 0;
 	}
 
 	private static void feedback(CommandContext<FabricClientCommandSource> context, String message) {

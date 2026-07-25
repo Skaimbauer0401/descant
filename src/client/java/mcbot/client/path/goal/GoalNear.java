@@ -30,7 +30,7 @@ public record GoalNear(BlockPos pos, int radius) implements Goal {
 		// travel we will never actually make. Deducting them keeps the estimate admissible; leaving
 		// them in would overestimate, and an overestimating heuristic can talk A* out of the best
 		// route entirely.
-		return Math.max(0.0, estimate - radius * BotSettings.SPRINT_COST);
+		return Math.max(0.0, estimate - radius * BotSettings.SPRINT_COST.get());
 	}
 
 	@Override
