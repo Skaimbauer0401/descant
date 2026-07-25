@@ -205,7 +205,6 @@ public final class BotController {
 	private Item smeltInput;
 	private Item smeltFuel;
 	private int smeltCount;
-	private int smeltFuelPieces;
 	private String smeltName = "";
 
 	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
@@ -395,20 +394,18 @@ public final class BotController {
 	/**
 	 * Smelts something in a furnace, walking there first if it is out of reach.
 	 *
-	 * @param fuelPieces how many pieces of fuel to load, worked out from the fuel's burn time
 	 */
 	public void smelt(Minecraft minecraft, LocalPlayer player, BlockPos furnace, Item input,
-			Item fuel, int count, int fuelPieces, String name) {
+			Item fuel, int count, String name) {
 		this.smeltFurnace = furnace.immutable();
 		this.smeltInput = input;
 		this.smeltFuel = fuel;
 		this.smeltCount = count;
-		this.smeltFuelPieces = fuelPieces;
 		this.smeltName = name;
 
 		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(furnace)) <= BotSettings.REACH.get()) {
 			resetPlan(minecraft);
-			smelter.begin(furnace, input, fuel, count, fuelPieces);
+			smelter.begin(furnace, input, fuel, count);
 			status = Status.SMELTING;
 			return;
 		}
@@ -425,14 +422,11 @@ public final class BotController {
 				smelter.cancel(minecraft);
 				replan(minecraft); // walk back into reach and pick it up again
 			}
-			case NO_MATERIAL -> {
+			case NO_MATERIAL, FAILED -> {
+				String why = smelter.problem();
 				smelter.cancel(minecraft);
-				finishSmelting(minecraft, "The furnace stopped — out of fuel, or " + smeltName
-						+ " cannot be smelted.");
-			}
-			case FAILED -> {
-				smelter.cancel(minecraft);
-				finishSmelting(minecraft, "Couldn't work the furnace.");
+				finishSmelting(minecraft, "Couldn't smelt " + smeltName
+						+ (why.isEmpty() ? "." : " — " + why + "."));
 			}
 		}
 	}
@@ -2398,7 +2392,7 @@ public final class BotController {
 		// Arrived at the furnace we came to work.
 		if (smeltFurnace != null && minecraft.player != null) {
 			resetPlan(minecraft);
-			smelter.begin(smeltFurnace, smeltInput, smeltFuel, smeltCount, smeltFuelPieces);
+			smelter.begin(smeltFurnace, smeltInput, smeltFuel, smeltCount);
 			status = Status.SMELTING;
 			return;
 		}

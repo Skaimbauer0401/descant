@@ -26,8 +26,10 @@ import net.minecraft.world.level.block.state.BlockState;
 /**
  * Smelts something in a furnace.
  *
- * <p>The bot finds a furnace, walks to it, loads exactly what was asked for plus enough fuel to burn
- * it, waits, and takes the result out.</p>
+ * <p>The bot finds a furnace, walks to it, loads it, waits, and takes out both the result and
+ * whatever was not used. The count is honoured at the collecting end rather than the loading end —
+ * see {@link Smelter} — so a request for three out of a stack of thirty gets three, and the
+ * twenty-seven come home again.</p>
  *
  * <p>Fuel is chosen rather than demanded, because being made to name it would mean calling
  * {@code inventory} first every single time to find out what is available. Coal and charcoal are
@@ -110,7 +112,7 @@ public final class SmeltAction implements Action {
 					+ " blocks. Craft one with craft(item=furnace) and place it, or travel to one.");
 		}
 
-		context.controller().smelt(minecraft, player, furnace, input, fuel.getItem(), count, pieces, wanted);
+		context.controller().smelt(minecraft, player, furnace, input, fuel.getItem(), count, wanted);
 		return ActionResult.okQuiet("Smelting " + count + " " + wanted + " into "
 				+ InventoryAction.id(result.getItem()) + ", burning "
 				+ pieces + " " + InventoryAction.id(fuel.getItem()) + ".");

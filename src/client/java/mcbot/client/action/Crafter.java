@@ -101,7 +101,10 @@ public final class Crafter {
 		}
 
 		Vec3 centre = Vec3.atCenterOf(table);
-		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH.get()) {
+		// Slack on purpose: REACH is what the bot needs to *break* a block, but half the distance to a
+		// container's centre is inside the container. Failing on that put the bot into a loop of
+		// walking away and coming back without ever opening anything.
+		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH.get() + 1.5) {
 			cancel(minecraft);
 			return ActionState.OUT_OF_RANGE;
 		}

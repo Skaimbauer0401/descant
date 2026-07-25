@@ -77,7 +77,9 @@ public final class ChestDeposit {
 		}
 
 		Vec3 centre = Vec3.atCenterOf(chest);
-		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH.get()) {
+		// Slack, for the same reason as the crafting bench: the centre of a block is half a block
+		// further away than its face, and REACH is sized for breaking blocks, not opening them.
+		if (player.getEyePosition().distanceTo(centre) > BotSettings.REACH.get() + 1.5) {
 			cancel(minecraft);
 			return ActionState.OUT_OF_RANGE;
 		}
