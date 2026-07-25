@@ -9,7 +9,7 @@ import mcbot.client.BotSettings;
 import mcbot.client.action.ActionState;
 import mcbot.client.action.BlockBreaker;
 import mcbot.client.action.BlockPlacer;
-import mcbot.client.action.ChestDeposit;
+import mcbot.client.action.ChestTransfer;
 import mcbot.client.action.Crafter;
 import mcbot.client.action.Smelter;
 import mcbot.client.action.CombatAction;
@@ -102,7 +102,7 @@ public final class BotController {
 	private final DoorOpener doorOpener = new DoorOpener();
 	private final EatAction eater = new EatAction();
 	private final CombatAction combat = new CombatAction();
-	private final ChestDeposit depositor = new ChestDeposit();
+	private final ChestTransfer transfer = new ChestTransfer();
 	private final Crafter crafter = new Crafter();
 	private final Smelter smelter = new Smelter();
 	private final Consumer<Component> messageSink;
@@ -229,6 +229,12 @@ public final class BotController {
 	 * a default.</p>
 	 */
 	private Predicate<ItemStack> depositFilter = InventoryManager::isHaul;
+
+	/** Whether the current chest errand is taking things out rather than putting them in. */
+	private boolean depositTaking;
+
+	/** When taking, how many to come back with; {@code 0} means everything that matches. */
+	private int depositWanted;
 
 	/** Task parked while the bot runs a deposit errand, restored when it gets back. */
 	private Goal parkedGoal;
@@ -1184,7 +1190,7 @@ public final class BotController {
 
 	/** The chest being emptied right now, or {@code null}. For the in-world display. */
 	public BlockPos activeDepositTarget() {
-		return depositor.target();
+		return transfer.target();
 	}
 
 	/**
@@ -1210,6 +1216,8 @@ public final class BotController {
 		}
 
 		depositFilter = InventoryManager::isHaul; // the automatic trip never gives away the kit
+		depositTaking = false;
+		depositWanted = 0;
 		beginDeposit(minecraft, "Inventory full — banking the haul at " + format(depositChest) + ".");
 		return true;
 	}
@@ -1251,21 +1259,52 @@ public final class BotController {
 			return "Nothing to bank: no " + describe + " is being carried.";
 		}
 		depositFilter = what;
+		depositTaking = false;
+		depositWanted = 0;
 		beginDeposit(minecraft, "Taking " + describe + " to the chest at " + format(depositChest) + ".");
 		return null;
 	}
 
+	/**
+	 * Fetches things back out of the chest.
+	 *
+	 * <p>The mirror of {@link #depositNow}, and it shares the whole errand — parking the current job,
+	 * walking over, and picking the job back up afterwards — because from the bot's point of view a
+	 * trip to the chest is a trip to the chest whichever way the items end up going.</p>
+	 *
+	 * <p>Nothing can be checked in advance: what is in a chest is unknown until it is open. So this
+	 * always sets off, and coming back with nothing is a legitimate outcome rather than a failure.</p>
+	 *
+	 * @param count stop once the inventory holds this many, or {@code 0} for everything that matches
+	 * @return why it cannot, or {@code null} once the trip has started
+	 */
+	public String withdrawNow(Minecraft minecraft, Predicate<ItemStack> what, String describe,
+			int count) {
+		if (depositChest == null) {
+			return "No chest set. Use chest to pick one first.";
+		}
+		if (depositing) {
+			return "Already on the way to the chest.";
+		}
+		depositFilter = what;
+		depositTaking = true;
+		depositWanted = Math.max(0, count);
+		beginDeposit(minecraft, "Fetching " + describe + " from the chest at "
+				+ format(depositChest) + ".");
+		return null;
+	}
+
 	private void tickDepositing(Minecraft minecraft, LocalPlayer player) {
-		switch (depositor.tick(minecraft, player)) {
+		switch (transfer.tick(minecraft, player)) {
 			case WORKING -> {
 				// keep transferring
 			}
 			case DONE -> finishDeposit(minecraft, true);
 			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
-				depositor.cancel(minecraft);
+				transfer.cancel(minecraft);
 				// Could not reach or open it. Give up on banking rather than stalling the whole task —
 				// a chest that has been broken or walled in must not end the mining run.
-				message("Couldn't use the chest — carrying on without banking.");
+				message("Couldn't use the chest — carrying on without it.");
 				depositChest = null;
 				finishDeposit(minecraft, false);
 			}
@@ -1275,10 +1314,12 @@ public final class BotController {
 	/** Restores the task the deposit trip interrupted. */
 	private void finishDeposit(Minecraft minecraft, boolean banked) {
 		if (banked) {
-			message("Stashed.");
+			message(depositTaking ? "Collected." : "Stashed.");
 		}
 		depositing = false;
 		depositFilter = InventoryManager::isHaul; // back to the safe default for the next trip
+		depositTaking = false;
+		depositWanted = 0;
 		goal = parkedGoal;
 		mineTarget = parkedMineTarget;
 		mineTargetBlock = parkedMineTargetBlock;
@@ -2340,7 +2381,7 @@ public final class BotController {
 		placer.cancel();
 		doorOpener.reset();
 		if (minecraft != null) {
-			depositor.cancel(minecraft);
+			transfer.cancel(minecraft);
 			crafter.cancel(minecraft);
 			smelter.cancel(minecraft);
 		}
@@ -2374,7 +2415,7 @@ public final class BotController {
 		// finished that instead.
 		if (depositing && minecraft.player != null) {
 			resetPlan(minecraft);
-			depositor.begin(depositChest, depositFilter);
+			transfer.begin(depositChest, depositFilter, depositTaking, depositWanted);
 			status = Status.DEPOSITING;
 			return;
 		}

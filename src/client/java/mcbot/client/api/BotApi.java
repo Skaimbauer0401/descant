@@ -16,6 +16,7 @@ import mcbot.client.api.actions.PlaceAction;
 import mcbot.client.api.actions.SetAction;
 import mcbot.client.api.actions.SmeltAction;
 import mcbot.client.api.actions.StatusAction;
+import mcbot.client.api.actions.TakeAction;
 import mcbot.client.api.actions.StopAction;
 import mcbot.client.api.actions.ToggleAction;
 import mcbot.client.api.actions.UseAction;
@@ -61,6 +62,7 @@ public final class BotApi {
 		actions.register(new EquipAction());
 		actions.register(new DropAction());
 		actions.register(new DepositAction());
+		actions.register(new TakeAction());
 		actions.register(new StatusAction());
 		actions.register(new StopAction());
 		actions.register(new SetAction());

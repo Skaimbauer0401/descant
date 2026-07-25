@@ -302,6 +302,7 @@ public final class AiAgent {
 				- deposit stashes things in the chest on demand. By default it banks the haul \
 				and keeps the tools, food and blocks the bot works with; pass what='food', \
 				what='all', or an item id, to hand over something specific instead. drop \
-				throws things away for good, so prefer deposit whenever a chest is set.""";
+				throws things away for good, so prefer deposit whenever a chest is set.
+				- take is the other half of deposit: it fetches things back out of the chest — 				coal for a smelt, planks for a build. What is in the chest is unknown until 				the bot gets there, so it may come back with less than asked, or nothing.""";
 	}
 }

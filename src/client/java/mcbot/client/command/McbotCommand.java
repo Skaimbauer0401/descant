@@ -57,6 +57,7 @@ import net.minecraft.resources.Identifier;
  *   /mcbot use                     right-click whatever the bot is looking at
  *   /mcbot inventory               list what is carried
  *   /mcbot deposit [haul|food|all|&lt;item&gt;]  stash it now; defaults to the haul
+ *   /mcbot take &lt;food|all|&lt;item&gt;&gt; [count]  fetch it back out of the chest
  *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
@@ -133,6 +134,18 @@ public final class McbotCommand {
 										"block", StringArgumentType.getString(context, "block"))))))
 				.then(ClientCommands.literal("inventory")
 						.executes(context -> run(context, "inventory", Arguments.none())))
+				.then(ClientCommands.literal("take")
+						.then(ClientCommands.<String>argument("what", StringArgumentType.word())
+								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
+										Stream.concat(Stream.of("food", "all"),
+												BuiltInRegistries.ITEM.keySet().stream().map(Identifier::getPath)),
+										builder))
+								.executes(context -> run(context, "take", Arguments.of(
+										"what", StringArgumentType.getString(context, "what"))))
+								.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
+										.executes(context -> run(context, "take", Arguments.of(
+												"what", StringArgumentType.getString(context, "what"),
+												"count", IntegerArgumentType.getInteger(context, "count")))))))
 				.then(ClientCommands.literal("deposit")
 						.executes(context -> run(context, "deposit", Arguments.none()))
 						.then(ClientCommands.<String>argument("what", StringArgumentType.word())

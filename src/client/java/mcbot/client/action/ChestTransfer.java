@@ -17,17 +17,21 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Empties the haul into a chest.
+ * Moves items between the inventory and a chest, in either direction.
  *
- * <p>Without this, a mining run ends the moment the inventory fills: the bot carries on breaking
- * blocks whose drops it can no longer pick up. Being able to bank what it has collected is what turns
- * {@code find <ore> true} from a demonstration into something worth leaving running.</p>
+ * <p>Putting things in is what turns {@code find <ore> true} from a demonstration into something
+ * worth leaving running — without it a mining run ends the moment the inventory fills, and the bot
+ * carries on breaking blocks whose drops it can no longer pick up. Taking things back out is the same
+ * machinery read backwards, and it is what lets a stored stack become the input to the next job.</p>
  *
- * <p>Runs as a small state machine because opening a container is not instant — the click goes to the
- * server and the menu arrives some ticks later, so the deposit has to wait for it rather than assume
- * it. Everything after that is a shift-click per stack, which is a single container input.</p>
+ * <p>The two directions differ in exactly one place: which side's slots get shift-clicked. Everything
+ * else — opening, pacing, closing — is shared, which is why this is one class with a flag rather than
+ * two that would drift apart.</p>
+ *
+ * <p>Runs as a small state machine because opening a container is not instant: the click goes to the
+ * server and the menu arrives some ticks later, so it has to wait rather than assume.</p>
  */
-public final class ChestDeposit {
+public final class ChestTransfer {
 
 	/** How long to wait for the server to send the container menu before giving up. */
 	private static final int OPEN_TIMEOUT_TICKS = 40;
@@ -43,14 +47,28 @@ public final class ChestDeposit {
 	}
 
 	private BlockPos chest;
-	private Predicate<ItemStack> deposit;
+	private Predicate<ItemStack> matching;
+
+	/** {@code true} to take out of the chest, {@code false} to put in. */
+	private boolean taking;
+
+	/** Stop once the inventory holds this many, or {@code 0} for everything that matches. */
+	private int wanted;
+
 	private Phase phase;
 	private int ticks;
 	private int sinceTransfer;
 
-	public void begin(BlockPos chest, Predicate<ItemStack> deposit) {
+	/**
+	 * @param matching which stacks to move
+	 * @param taking   {@code true} to take from the chest, {@code false} to put into it
+	 * @param wanted   when taking, stop once the inventory holds this many; {@code 0} takes the lot
+	 */
+	public void begin(BlockPos chest, Predicate<ItemStack> matching, boolean taking, int wanted) {
 		this.chest = chest.immutable();
-		this.deposit = deposit;
+		this.matching = matching;
+		this.taking = taking;
+		this.wanted = wanted;
 		this.phase = Phase.OPENING;
 		this.ticks = 0;
 		this.sinceTransfer = 0;
@@ -62,7 +80,7 @@ public final class ChestDeposit {
 		phase = null;
 	}
 
-	/** The chest being emptied into, or {@code null}. For the in-world display. */
+	/** The chest being used, or {@code null}. For the in-world display. */
 	public BlockPos target() {
 		return chest;
 	}
@@ -123,12 +141,14 @@ public final class ChestDeposit {
 		}
 		sinceTransfer = 0;
 
-		Slot next = nextSlotToDeposit(player);
+		// Checked before moving anything, so asking for what is already carried moves nothing at all.
+		if (taking && wanted > 0 && carried(player) >= wanted) {
+			return finish(minecraft);
+		}
+
+		Slot next = nextSlot(player);
 		if (next == null) {
-			closeMenu(minecraft);
-			chest = null;
-			phase = null;
-			return ActionState.DONE;
+			return finish(minecraft);
 		}
 
 		// Shift-click: moves the whole stack across without needing to know where it lands.
@@ -137,25 +157,54 @@ public final class ChestDeposit {
 		return ActionState.WORKING;
 	}
 
+	private ActionState finish(Minecraft minecraft) {
+		closeMenu(minecraft);
+		chest = null;
+		phase = null;
+		return ActionState.DONE;
+	}
+
 	/**
-	 * The next player-inventory slot holding something worth banking, or {@code null} when done.
+	 * The next slot to shift-click, or {@code null} when there is nothing left to move.
 	 *
-	 * <p>Slots are identified by which {@link net.minecraft.world.Container} backs them rather than by
-	 * index arithmetic. A chest menu lays out the container's slots first and the player's after, but
-	 * the split point depends on the chest's size (single, double, barrel), and hard-coding an offset
-	 * would quietly deposit into the wrong half for one of them.</p>
+	 * <p>Slots are told apart by which {@link net.minecraft.world.Container} backs them rather than by
+	 * index arithmetic. A chest menu lays the container's slots out first and the player's after, but
+	 * the split point depends on the chest's size — single, double, barrel — and a hard-coded offset
+	 * would quietly work on the wrong half for one of them.</p>
+	 *
+	 * <p>This one comparison is the entire difference between the two directions.</p>
 	 */
-	private Slot nextSlotToDeposit(LocalPlayer player) {
+	private Slot nextSlot(LocalPlayer player) {
 		for (Slot slot : player.containerMenu.slots) {
-			if (!(slot.container instanceof Inventory)) {
-				continue; // a chest slot, not ours
+			boolean ours = slot.container instanceof Inventory;
+			if (ours == taking) {
+				continue; // taking wants the chest's slots; putting wants ours
 			}
 			ItemStack stack = slot.getItem();
-			if (!stack.isEmpty() && deposit.test(stack)) {
+			if (!stack.isEmpty() && matching.test(stack)) {
 				return slot;
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * How many matching items the inventory already holds.
+	 *
+	 * <p>Only meaningful while taking, and only approximate as a stopping rule: a shift-click moves a
+	 * whole stack, so the last one can overshoot. Stopping as soon as there is enough is the honest
+	 * behaviour — asking for ten and getting a stack is better than a precise transfer built on the
+	 * cursor juggling that already failed once in {@link Smelter}.</p>
+	 */
+	private int carried(LocalPlayer player) {
+		int total = 0;
+		for (Slot slot : player.containerMenu.slots) {
+			ItemStack stack = slot.getItem();
+			if (slot.container instanceof Inventory && !stack.isEmpty() && matching.test(stack)) {
+				total += stack.getCount();
+			}
+		}
+		return total;
 	}
 
 	/**
