@@ -53,6 +53,16 @@ public final class BotApi {
 	}
 
 	/**
+	 * Whether the bot is in the middle of something.
+	 *
+	 * <p>Used by the AI loop to tell a call that <em>started</em> work from one that finished on the
+	 * spot, so the model can be told what actually happened rather than "heading there".</p>
+	 */
+	public boolean busy() {
+		return controller.isActive();
+	}
+
+	/**
 	 * Runs an action by name.
 	 *
 	 * <p>Never throws. Every outcome — a bad name, a bad argument, no world loaded — comes back as a

@@ -5,6 +5,7 @@ import mcbot.client.settings.BooleanSetting;
 import mcbot.client.settings.DoubleSetting;
 import mcbot.client.settings.EnumSetting;
 import mcbot.client.settings.IntSetting;
+import mcbot.client.settings.StringSetting;
 
 /**
  * Everything about the bot's behaviour that can be adjusted, plus the handful of numbers that
@@ -211,6 +212,87 @@ public final class BotSettings {
 	/** Whether the planned route is drawn in the world. */
 	public static final BooleanSetting SHOW_PATH = new BooleanSetting("showPath", true,
 			"Whether the planned route is drawn in the world.");
+
+	// ---------------------------------------------------------------- the model
+	//
+	// Local and cloud are the same setting shape on purpose: an Ollama cloud model is served through
+	// the same local daemon, so the only difference that reaches the code is the model name. Keeping
+	// both names side by side and switching with one flag makes them easy to compare on one task,
+	// which is the whole reason to have both.
+
+	/**
+	 * The local model.
+	 *
+	 * <p>It has to support tool calling — Ollama will refuse outright otherwise, which rules out
+	 * several popular small models including the Gemma family.</p>
+	 */
+	public static final StringSetting AI_MODEL = new StringSetting("aiModel", "gemma4:e4b",
+			"an installed, tool-capable Ollama model",
+			"The local model that drives the bot. Must support tool calling. gemma4:e4b is small and "
+					+ "quick; qwen3:14b and mistral-nemo:12b are stronger if you have the memory.");
+
+	/**
+	 * The cloud model.
+	 *
+	 * <p>MiniMax M3, chosen by measurement rather than reputation. Asked to gather iron and bank it in
+	 * a chest, it was the only free model that both picked the right actions <em>and</em> got their
+	 * order right, in about two seconds. {@code gpt-oss:120b} confused {@code set} with {@code chest};
+	 * {@code nemotron-3-ultra} was right but took nearly a minute per turn, which across a dozen turns
+	 * is a very long time to watch nothing happen.</p>
+	 *
+	 * <p>Cloud models are retired often — several were withdrawn within the last month — so expect to
+	 * change this. Needs {@code ollama signin} once.</p>
+	 */
+	public static final StringSetting AI_CLOUD_MODEL = new StringSetting(
+			"aiCloudModel", "minimax-m3:cloud",
+			"an Ollama cloud model name",
+			"The cloud model, used when aiCloud is on. Needs 'ollama signin' once. Much stronger than "
+					+ "anything local, at the cost of sending the conversation off this machine. "
+					+ "nemotron-3-ultra:cloud is heavier but far slower.");
+
+	/** Which of the two models to use. */
+	public static final BooleanSetting AI_CLOUD = new BooleanSetting("aiCloud", false,
+			"Use aiCloudModel instead of aiModel. Off keeps everything on this machine.");
+
+	/** Where the Ollama daemon is. Cloud models go through it too. */
+	public static final StringSetting AI_HOST = new StringSetting(
+			"aiHost", "http://localhost:11434", "a base URL",
+			"Where Ollama is listening. Cloud models are proxied through this same daemon.");
+
+	/**
+	 * How many rounds of thinking the model gets before the run is called off.
+	 *
+	 * <p>A safety net rather than a budget. A model that has started going in circles will do it
+	 * indefinitely, and this is what stops it doing so all afternoon.</p>
+	 */
+	public static final IntSetting AI_MAX_STEPS = new IntSetting("aiMaxSteps", 12, 1, 200,
+			"How many rounds of function calls one AI run may take before it is called off.");
+
+	/** How long to wait for the model to reply. Cloud round-trips on a big model are not quick. */
+	public static final IntSetting AI_REQUEST_TIMEOUT = new IntSetting(
+			"aiRequestTimeout", 180, 5, 900,
+			"Seconds to wait for the model to answer before giving up on the request.");
+
+	/**
+	 * How long one action may run before the model is told about it anyway.
+	 *
+	 * <p>Not a cancellation — the bot keeps going. It is the point at which waiting silently stops
+	 * being useful and the model is better off knowing the job is long, or stuck.</p>
+	 */
+	public static final IntSetting AI_ACTION_TIMEOUT = new IntSetting(
+			"aiActionTimeout", 300, 5, 3600,
+			"Seconds to let one action run before reporting back to the model. The bot carries on "
+					+ "either way; this only decides when the model hears about it.");
+
+	/**
+	 * Model temperature.
+	 *
+	 * <p>Low. Picking the right function from a list is not a task that benefits from invention, and
+	 * a small model at default heat will cheerfully call something that does not exist.</p>
+	 */
+	public static final DoubleSetting AI_TEMPERATURE = new DoubleSetting("aiTemperature", 0.2,
+			0.0, 2.0,
+			"How inventive the model is. Low is right for choosing between functions.");
 
 	// ---------------------------------------------------------------- banking the haul
 

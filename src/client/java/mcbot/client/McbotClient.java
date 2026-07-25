@@ -1,5 +1,6 @@
 package mcbot.client;
 
+import mcbot.client.ai.AiAgent;
 import mcbot.client.api.BotApi;
 import mcbot.client.command.McbotCommand;
 import mcbot.client.control.BotController;
@@ -22,6 +23,7 @@ public class McbotClient implements ClientModInitializer {
 
 	private static BotController controller;
 	private static BotApi api;
+	private static AiAgent agent;
 
 	/** The active controller, or {@code null} before mod initialisation has run. */
 	public static BotController controller() {
@@ -38,15 +40,21 @@ public class McbotClient implements ClientModInitializer {
 		return api;
 	}
 
+	/** The language-model driver, or {@code null} before mod initialisation has run. */
+	public static AiAgent agent() {
+		return agent;
+	}
+
 	@Override
 	public void onInitializeClient() {
 		controller = new BotController(McbotClient::sendChatMessage);
 		api = new BotApi(controller);
+		agent = new AiAgent(api, McbotClient::sendChatMessage);
 
 		new PathRenderer(controller).register();
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-				new McbotCommand(api).register(dispatcher));
+				new McbotCommand(api, agent).register(dispatcher));
 
 		// START_CLIENT_TICK runs before the player's input is polled, so a decision made here is
 		// acted upon in the same tick rather than the next one.

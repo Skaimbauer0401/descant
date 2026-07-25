@@ -19,6 +19,7 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import mcbot.client.BotSettings;
+import mcbot.client.ai.AiAgent;
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
@@ -46,6 +47,8 @@ import net.minecraft.network.chat.Component;
  *                                          next; the default is false, which simply travels
  *                                          there once
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
+ *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
+ *   /mcbot ai stop                 call it off
  *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
  *   /mcbot api                     write the action menu out as JSON
  *   /mcbot stop | status | path
@@ -66,9 +69,11 @@ import net.minecraft.network.chat.Component;
 public final class McbotCommand {
 
 	private final BotApi api;
+	private final AiAgent agent;
 
-	public McbotCommand(BotApi api) {
+	public McbotCommand(BotApi api, AiAgent agent) {
 		this.api = api;
+		this.agent = agent;
 	}
 
 	public void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
@@ -85,6 +90,7 @@ public final class McbotCommand {
 								.executes(this::find)))
 				.then(chest())
 				.then(set())
+				.then(ai())
 				.then(ClientCommands.literal("api").executes(this::dumpApi))
 				.then(ClientCommands.literal("stop")
 						.executes(context -> run(context, "stop", Arguments.none())))
@@ -161,6 +167,25 @@ public final class McbotCommand {
 					.executes(context -> run(context, "chest", Arguments.of("source", source.key()))));
 		}
 		return node;
+	}
+
+	// ---------------------------------------------------------------- the model
+
+	/**
+	 * {@code /mcbot ai <what you want>} — hand the job to a language model.
+	 *
+	 * <p>Deliberately <em>not</em> an action. Everything else the bot can do is on the menu the model
+	 * chooses from, and putting "ask a model" on that menu would let it call itself.</p>
+	 */
+	private LiteralArgumentBuilder<FabricClientCommandSource> ai() {
+		return ClientCommands.literal("ai")
+				.executes(context -> report(context, agent.isRunning()
+						? ActionResult.ok("Working on it. /mcbot ai stop to call it off.")
+						: ActionResult.failed("Say what you want, e.g. /mcbot ai get me some iron.")))
+				.then(ClientCommands.literal("stop").executes(context -> report(context, agent.stop())))
+				.then(ClientCommands.<String>argument("goal", StringArgumentType.greedyString())
+						.executes(context -> report(context,
+								agent.start(StringArgumentType.getString(context, "goal")))));
 	}
 
 	// ---------------------------------------------------------------- settings
@@ -247,7 +272,11 @@ public final class McbotCommand {
 	 */
 	private int run(CommandContext<FabricClientCommandSource> context, String action,
 			Arguments arguments) {
-		ActionResult result = api.invoke(action, arguments);
+		return report(context, api.invoke(action, arguments));
+	}
+
+	/** Prints a result the way the player expects, whoever produced it. */
+	private static int report(CommandContext<FabricClientCommandSource> context, ActionResult result) {
 		if (!result.quiet()) {
 			if (result.ok()) {
 				feedback(context, result.message());
