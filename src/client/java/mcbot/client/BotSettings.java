@@ -226,10 +226,11 @@ public final class BotSettings {
 	 * <p>It has to support tool calling — Ollama will refuse outright otherwise, which rules out
 	 * several popular small models including the Gemma family.</p>
 	 */
-	public static final StringSetting AI_MODEL = new StringSetting("aiModel", "gemma4:e4b",
+	public static final StringSetting AI_MODEL = new StringSetting("aiModel", "gemma4:12b",
 			"an installed, tool-capable Ollama model",
-			"The local model that drives the bot. Must support tool calling. gemma4:e4b is small and "
-					+ "quick; qwen3:14b and mistral-nemo:12b are stronger if you have the memory.");
+			"The local model that drives the bot. Must support tool calling. gemma4:12b picks actions "
+					+ "correctly and runs entirely on this machine; qwen3:14b is stronger if you have "
+					+ "the memory for it.");
 
 	/**
 	 * The cloud model.

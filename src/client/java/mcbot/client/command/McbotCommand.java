@@ -50,6 +50,7 @@ import net.minecraft.resources.Identifier;
  *                                  stop after that many — a count on its own implies `true`
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
+ *   /mcbot mine &lt;x&gt; &lt;y&gt; &lt;z&gt;        break the block at that exact spot
  *   /mcbot locate &lt;block&gt;          report where the nearest one is, without moving
  *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
@@ -102,6 +103,14 @@ public final class McbotCommand {
 								.executes(this::find)))
 				.then(chest())
 				.then(place())
+				.then(ClientCommands.literal("mine")
+						.then(ClientCommands.<Integer>argument("x", IntegerArgumentType.integer())
+								.then(ClientCommands.<Integer>argument("y", IntegerArgumentType.integer())
+										.then(ClientCommands.<Integer>argument("z", IntegerArgumentType.integer())
+												.executes(context -> run(context, "mine", Arguments.of(
+														"x", IntegerArgumentType.getInteger(context, "x"),
+														"y", IntegerArgumentType.getInteger(context, "y"),
+														"z", IntegerArgumentType.getInteger(context, "z"))))))))
 				.then(equip())
 				.then(drop())
 				.then(ClientCommands.literal("look")

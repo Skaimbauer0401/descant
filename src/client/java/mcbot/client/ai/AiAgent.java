@@ -288,8 +288,10 @@ public final class AiAgent {
 				- look describes the surroundings: coordinates, which way it faces, dimension, \
 				biome, time of day, weather, light, and every creature nearby. Free, like \
 				the other two.
-				- place puts a block down, in front of the bot or at a spot you name. It has to \
-				be carried already.
+				- place puts a block down, in front of the bot or at a spot you name; it has to \
+				be carried already. mine is its opposite, breaking the block at exact \
+				coordinates. Use find when you want a kind of block wherever it happens to \
+				be, and mine when you mean that particular spot.
 				- craft makes things from what is carried. Small recipes happen where the bot \
 				stands; ones needing a 3x3 grid send it to a crafting table by itself. It \
 				cannot smelt — anything needing a furnace is out of reach for now.

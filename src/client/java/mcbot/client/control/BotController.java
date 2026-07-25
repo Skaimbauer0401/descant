@@ -42,6 +42,7 @@ import net.minecraft.world.item.crafting.display.RecipeDisplayId;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -199,6 +200,17 @@ public final class BotController {
 
 	/** A block to right-click on arrival — a lever, a door, a station to open. */
 	private BlockPos useTarget;
+
+	/**
+	 * One named block to break, as opposed to a hunt for a <em>kind</em> of block.
+	 *
+	 * <p>Kept alongside {@code mineTarget} rather than instead of it. The machinery that walks to a
+	 * block, breaks it and sweeps up the drops is exactly what this needs, so it borrows all of it;
+	 * this field only records that the job was a one-off dig, so finishing it can be announced instead
+	 * of quietly ending the way a spent hunt does.</p>
+	 */
+	private BlockPos digTarget;
+	private String digName = "";
 
 	/** A pending smelt: the furnace to use, what goes in, what burns, and how much of each. */
 	private BlockPos smeltFurnace;
@@ -456,6 +468,36 @@ public final class BotController {
 		status = Status.SUCCEEDED;
 		input.clear();
 		message(reason);
+	}
+
+	/**
+	 * Breaks the block at one exact spot, walking there first.
+	 *
+	 * <p>Reuses the hunt's own approach-and-mine path: stand somewhere within reach, break it, sweep up
+	 * what it dropped. The only difference from hunting a block <em>type</em> is that there is no next
+	 * one to go and find afterwards.</p>
+	 *
+	 * @return whether there was anything there to break
+	 */
+	public boolean mineAt(Minecraft minecraft, LocalPlayer player, BlockPos target, String name) {
+		BlockState state = minecraft.level.getBlockState(target);
+		if (state.isAir()) {
+			return false;
+		}
+
+		navigateTo(approachPosition(minecraft, player, target), true, true);
+		mineTarget = target.immutable();
+		mineTargetBlock = state.getBlock();
+		digTarget = target.immutable();
+		digName = name;
+
+		// Not a hunt: nothing should go looking for another one of these afterwards.
+		huntedBlock = null;
+		huntedType = null;
+		huntedEntity = null;
+		huntExecute = false;
+		setHuntQuota(0);
+		return true;
 	}
 
 	/** Right-clicks a block, walking to it first if it is out of reach. */
@@ -825,6 +867,7 @@ public final class BotController {
 		craftTable = null;
 		smeltFurnace = null;
 		useTarget = null;
+		digTarget = null;
 		mineTarget = null;
 		mineTargetBlock = null;
 		collecting = false;
@@ -1971,6 +2014,12 @@ public final class BotController {
 				: type != null && huntForEntity(minecraft, player, type, name, true));
 
 		if (!more) {
+			// A one-off dig deserves saying so. A spent hunt ends quietly because it has already
+			// announced every block it took; this one has announced nothing.
+			if (digTarget != null) {
+				message("Broke the " + digName + " at " + format(digTarget) + ".");
+				digTarget = null;
+			}
 			huntedBlock = null;
 			huntedType = null;
 			huntedEntity = null;

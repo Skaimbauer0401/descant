@@ -257,9 +257,12 @@ public final class OllamaProvider implements LlmProvider {
 			return "Ollama refused the request for " + model()
 					+ ". Cloud models need 'ollama signin' first.";
 		}
-		if (status == 402 || lower.contains("quota") || lower.contains("rate limit")) {
-			return "Out of cloud quota for " + model()
-					+ ". Wait for it to reset, or switch back with '/mcbot set aiCloud false'.";
+		if (status == 402 || status == 429 || lower.contains("quota")
+				|| lower.contains("rate limit") || lower.contains("usage limit")) {
+			// Hit for real while testing: the free tier returns 429 with "session usage limit", which
+			// matches none of the words one would think to look for.
+			return "Out of Ollama cloud allowance for " + model() + " — it resets after a while. "
+					+ "Switch to the local model meanwhile with '/mcbot set aiCloud false'.";
 		}
 		return "Ollama returned HTTP " + status + ": " + brief(body);
 	}
