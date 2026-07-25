@@ -30,7 +30,15 @@ public interface Action {
 	 */
 	String description();
 
-	/** The arguments it accepts. Empty for actions that take none. */
+	/**
+	 * The arguments it accepts. Empty for actions that take none.
+	 *
+	 * <p><b>Must not touch the world, the player or the controller.</b> Unlike {@link #run}, this is
+	 * called off the client thread — the AI agent builds the tool schema on its worker thread before
+	 * it has anything to hand over with. Reading a registry or a static list is fine; reading the
+	 * level is a crash, and an intermittent one, since it depends on what the client is doing at the
+	 * time.</p>
+	 */
 	default List<Parameter> parameters() {
 		return List.of();
 	}

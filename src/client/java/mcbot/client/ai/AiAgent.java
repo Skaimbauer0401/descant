@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -64,8 +65,20 @@ public final class AiAgent {
 
 	public AiAgent(BotApi api, Consumer<Component> chat) {
 		this.api = api;
-		this.chat = chat;
 		this.provider = new OllamaProvider();
+
+		// Everything this class says comes from the worker thread, and putting a line in chat touches
+		// the GUI — which throws "RenderSystem called from wrong thread" rather than doing anything
+		// useful. Wrapping the sink once, here, means no call site has to remember; the alternative was
+		// a marshalling step at each say(), which works right up until someone adds the one that forgets.
+		this.chat = message -> {
+			try {
+				Minecraft.getInstance().execute(() -> chat.accept(message));
+			} catch (RejectedExecutionException e) {
+				// The client is shutting down. There is no chat left to print to, and a run being
+				// abandoned mid-sentence on the way out of the game is not worth reporting.
+			}
+		};
 	}
 
 	public boolean isRunning() {
@@ -91,6 +104,9 @@ public final class AiAgent {
 	 *
 	 * <p>Stops the bot as well as the conversation. Leaving the player walking somewhere a model chose,
 	 * with nothing left to change its mind, is not what anyone means by stop.</p>
+	 *
+	 * <p>Client thread only — it runs the {@code stop} action directly rather than handing it over.
+	 * The only caller is the chat command, which is already there.</p>
 	 */
 	public ActionResult stop() {
 		if (!running) {
