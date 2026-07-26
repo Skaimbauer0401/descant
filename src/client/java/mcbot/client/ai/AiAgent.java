@@ -274,6 +274,20 @@ public final class AiAgent {
 				- Coordinates are x (east), z (south) and y (height). Sea level is about y=63.
 				- For travelling, use goto with x and z and no y. Naming a height means guessing \
 				the terrain and the bot will tunnel or pillar to reach your number.
+				- GOING SOMEWHERE COSTS BLOCKS. goto, gotoLevel, find, mine and place all \
+				travel, and travelling is not only walking: the bot bridges across gaps and \
+				water and pillars up cliffs, spending blocks straight out of its inventory. \
+				Left to itself it spends the first solid block it finds, which may be the \
+				thing you were sent to fetch.
+				- So on any of those five, pass scaffold with a cheap block the bot is \
+				carrying — cobblestone, dirt, cobbled_deepslate, netherrack — and SAY IN \
+				YOUR REPLY which one you chose. Check inventory first if you do not know \
+				what is aboard. Pass scaffold='any' only when the player has said they do \
+				not care what gets spent. The choice sticks until you change it, and it \
+				also covers the short walks the other commands make.
+				- A named scaffold block is never substituted. When it runs out the bot \
+				stops building and routes around, so if it has none, gather some first — \
+				find with target='stone' or 'dirt' and a count of 64 is the usual answer.
 				- find and mine are BLUNT about how they reach a target. The bot takes the \
 				shortest route and tunnels through whatever is in the way, including \
 				digging straight down. It will not dig into lava it can see, or take a \
@@ -316,6 +330,8 @@ public final class AiAgent {
 				and keeps the tools, food and blocks the bot works with; pass what='food', \
 				what='all', or an item id, to hand over something specific instead. drop \
 				throws things away for good, so prefer deposit whenever a chest is set.
-				- take is the other half of deposit: it fetches things back out of the chest — 				coal for a smelt, planks for a build. What is in the chest is unknown until 				the bot gets there, so it may come back with less than asked, or nothing.""";
+				- take is the other half of deposit: it fetches things back out of the chest — \
+				coal for a smelt, planks for a build. What is in the chest is unknown until \
+				the bot gets there, so it may come back with less than asked, or nothing.""";
 	}
 }

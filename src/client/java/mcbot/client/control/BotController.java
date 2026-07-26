@@ -2066,15 +2066,17 @@ public final class BotController {
 				// excludes the haul — chasing the spruce log we just dropped, only to refuse to
 				// build with it, is an infinite loop.
 				Block avoid = huntedBlock;
-				if (fetchNearby(minecraft, player,
-						stack -> InventoryManager.isBuildingBlockExcept(stack, avoid),
-						"building blocks")) {
+				String scaffold = InventoryManager.scaffoldName();
+				if (fetchNearby(minecraft, player, InventoryManager.scaffoldFilter(avoid), scaffold)) {
 					replan(minecraft);
 				} else {
 					// Baritone's behaviour when it runs out of throwaway blocks: stop building and
 					// route around instead. It does not go off to dig up more, and neither do we.
+					//
+					// Naming the block matters when one was chosen: "out of building blocks" reads as
+					// an empty pack, when in fact the pack may be full and only the cobble has run out.
 					allowPlace = false;
-					message("Nothing to build with nearby — continuing without placing.");
+					message("Out of " + scaffold + " — continuing without placing.");
 					replan(minecraft);
 				}
 			}

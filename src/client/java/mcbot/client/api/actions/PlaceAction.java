@@ -2,6 +2,7 @@ package mcbot.client.api.actions;
 
 import java.util.List;
 
+import mcbot.client.BotSettings;
 import mcbot.client.action.BlockPlacer;
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionContext;
@@ -17,6 +18,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Puts a specific block down somewhere specific — a furnace, a crafting table, a torch.
@@ -25,6 +27,11 @@ import net.minecraft.world.level.Level;
  * spare block, wherever the route needs one. Here the block and the spot are both named, and if the
  * named block is not carried the action fails rather than substituting something else, because
  * putting down dirt when asked for a furnace is worse than not managing it.</p>
+ *
+ * <p>Both kinds can happen in one call, which is why {@code scaffold} appears here too: reaching a
+ * distant spot is an ordinary journey and spends ordinary scaffolding on the way. The two never get
+ * confused — {@code block} is what ends up at the destination, {@code scaffold} is what is spent
+ * getting there.</p>
  */
 public final class PlaceAction implements Action {
 
@@ -38,10 +45,14 @@ public final class PlaceAction implements Action {
 
 	@Override
 	public String description() {
-		return "Put a block down. The bot walks over if it is out of reach. Give x, y and z for an "
-				+ "exact spot, or leave them out to place it on the ground just in front of the bot, "
-				+ "which is usually what you want for a furnace or a crafting table. The block has to "
-				+ "be in the inventory already — check with 'inventory'.";
+		return "Put a block down. Give x, y and z for an exact spot, or leave them out to place it on "
+				+ "the ground just in front of the bot, which is usually what you want for a furnace "
+				+ "or a crafting table. The block has to be in the inventory already — check with "
+				+ "'inventory'. THIS TRAVELS: if the spot is out of reach the bot walks there by "
+				+ "itself, exactly as goto would — tunnelling, bridging and pillaring on the way and "
+				+ "spending blocks to do it — so for a distant spot say which block to spend with "
+				+ "'scaffold', or send it there with goto first if the route matters. The named block "
+				+ "is what gets placed at the spot; 'scaffold' is only what is spent getting there.";
 	}
 
 	@Override
@@ -51,7 +62,8 @@ public final class PlaceAction implements Action {
 						"The block id to place, such as 'furnace', 'crafting_table' or 'torch'."),
 				Parameter.optional("x", ParameterType.INTEGER, "East-west coordinate of the spot."),
 				Parameter.optional("y", ParameterType.INTEGER, "Height of the spot."),
-				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the spot."));
+				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the spot."),
+				Scaffold.PARAMETER);
 	}
 
 	@Override
@@ -66,6 +78,11 @@ public final class PlaceAction implements Action {
 		}
 		if (!InventoryManager.has(context.player(), stack -> stack.is(item))) {
 			return ActionResult.failed("No " + wanted + " in the inventory to place.");
+		}
+
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
 		}
 
 		LocalPlayer player = context.player();
@@ -100,7 +117,12 @@ public final class PlaceAction implements Action {
 		}
 
 		context.controller().buildAt(context.minecraft(), player, target, item);
-		return ActionResult.okQuiet("Placing " + wanted + " at " + describe(target) + ".");
+		// The scaffolding note only earns its space when there is actually a journey. Saying what will
+		// be spent bridging to a block already at arm's length is noise on every torch the bot places.
+		boolean travels = player.getEyePosition().distanceTo(Vec3.atCenterOf(target))
+				> BotSettings.REACH.get();
+		return ActionResult.okQuiet("Placing " + wanted + " at " + describe(target) + "."
+				+ (travels ? Scaffold.note() : ""));
 	}
 
 	/**

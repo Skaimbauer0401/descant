@@ -30,7 +30,9 @@ public final class GotoLevelAction implements Action {
 	@Override
 	public String description() {
 		return "Reach a particular height, anywhere — digging down to it or climbing up to it from "
-				+ "wherever the bot is. Use this for 'get down to diamond level', not for travelling.";
+				+ "wherever the bot is. Use this for 'get down to diamond level', not for travelling. "
+				+ "THIS DIGS AND PLACES BLOCKS: going down means tunnelling, and going up means "
+				+ "pillaring on blocks out of the inventory. Say which block to spend with 'scaffold'.";
 	}
 
 	@Override
@@ -39,7 +41,8 @@ public final class GotoLevelAction implements Action {
 				Parameter.required("y", ParameterType.INTEGER, "The height to reach."),
 				Parameter.optional("build", ParameterType.BOOLEAN,
 						"Whether the bot may mine and place blocks to get there. Default true. "
-								+ "Digging down almost always needs this."));
+								+ "Digging down almost always needs this."),
+				Scaffold.PARAMETER);
 	}
 
 	@Override
@@ -48,8 +51,13 @@ public final class GotoLevelAction implements Action {
 		BlockPos column = BlockPos.containing(context.player().position());
 		Goal goal = new GoalYLevel(arguments.getInt("y"), column);
 
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
+		}
+
 		context.controller().navigateTo(goal, build, build);
 		return ActionResult.ok("Heading to " + goal.describe()
-				+ (build ? "." : " (movement only, nothing will be mined or placed)."));
+				+ (build ? "." + Scaffold.note() : " (movement only, nothing will be mined or placed)."));
 	}
 }

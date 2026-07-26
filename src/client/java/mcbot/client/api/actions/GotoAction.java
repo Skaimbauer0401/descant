@@ -32,7 +32,11 @@ public final class GotoAction implements Action {
 	public String description() {
 		return "Travel to a location, pathfinding around, over and through whatever is in the way. "
 				+ "Leave out 'y' unless you specifically need a particular height — without it the bot "
-				+ "arrives at ground level, which is almost always what you want for a journey.";
+				+ "arrives at ground level, which is almost always what you want for a journey. "
+				+ "THIS PLACES BLOCKS: getting there is not only walking, and the bot will bridge "
+				+ "across gaps and water and pillar up cliffs, spending blocks out of its inventory to "
+				+ "do it. Say which block to spend with 'scaffold', or pass build=false to keep it to "
+				+ "routes it can walk without touching the world.";
 	}
 
 	@Override
@@ -44,7 +48,8 @@ public final class GotoAction implements Action {
 						"Height. Omit to arrive at ground level, whatever that turns out to be."),
 				Parameter.optional("build", ParameterType.BOOLEAN,
 						"Whether the bot may mine and place blocks to get there. Default true. "
-								+ "False keeps it to routes it can walk, leaving the world untouched."));
+								+ "False keeps it to routes it can walk, leaving the world untouched."),
+				Scaffold.PARAMETER);
 	}
 
 	@Override
@@ -52,6 +57,11 @@ public final class GotoAction implements Action {
 		int x = arguments.getInt("x");
 		int z = arguments.getInt("z");
 		boolean build = arguments.getBoolean("build", true);
+
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
+		}
 
 		Goal goal;
 		if (arguments.has("y")) {
@@ -64,6 +74,6 @@ public final class GotoAction implements Action {
 
 		context.controller().navigateTo(goal, build, build);
 		return ActionResult.ok("Heading to " + goal.describe()
-				+ (build ? "." : " (movement only, nothing will be mined or placed)."));
+				+ (build ? "." + Scaffold.note() : " (movement only, nothing will be mined or placed)."));
 	}
 }

@@ -40,7 +40,9 @@ public final class FindAction implements Action {
 				+ "nearest one and tunnels through whatever is in the way, including digging straight "
 				+ "down. It will not mine into lava it can see, or take a killing fall, but it will "
 				+ "gladly bore a hole through a build, break into a cave full of mobs, or spend a long "
-				+ "time underground. There is no movement-only version — find always breaks and places. "
+				+ "time underground. There is no movement-only version — find always breaks and places, "
+				+ "bridging gaps and pillaring up on blocks out of its own inventory, so say which "
+				+ "block to spend with 'scaffold'. "
 				+ "If any of that would matter, check the surroundings with look or locate first.";
 	}
 
@@ -57,7 +59,8 @@ public final class FindAction implements Action {
 						"How many to mine or kill before stopping. Needs execute=true. Counts blocks "
 								+ "broken and mobs killed, not items collected, so allow for a block "
 								+ "sometimes dropping more than one. Leave it out to clear every one in "
-								+ "range, which on a common ore can take a very long time."));
+								+ "range, which on a common ore can take a very long time."),
+				Scaffold.PARAMETER);
 	}
 
 	@Override
@@ -68,6 +71,11 @@ public final class FindAction implements Action {
 		if (count > 0 && !execute) {
 			return ActionResult.failed("A count needs execute=true — without it the bot only walks to "
 					+ "the nearest one and never gathers any.");
+		}
+
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
 		}
 
 		Identifier id = Identifier.tryParse(raw.contains(":") ? raw : "minecraft:" + raw);
@@ -109,10 +117,10 @@ public final class FindAction implements Action {
 
 	private static String describe(boolean execute, int count, String target) {
 		if (!execute) {
-			return "Heading to the nearest " + target + ".";
+			return "Heading to the nearest " + target + "." + Scaffold.note();
 		}
-		return count > 0
+		return (count > 0
 				? "Gathering " + count + " " + target + "."
-				: "Gathering every " + target + " in range.";
+				: "Gathering every " + target + " in range.") + Scaffold.note();
 	}
 }

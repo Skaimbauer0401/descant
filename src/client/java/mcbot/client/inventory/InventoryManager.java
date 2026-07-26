@@ -10,9 +10,12 @@ import java.util.function.Predicate;
 import java.util.function.ToDoubleFunction;
 import java.util.stream.Collectors;
 
+import mcbot.client.BotSettings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
@@ -168,8 +171,61 @@ public final class InventoryManager {
 	 * caller responds by gathering scaffolding.</p>
 	 */
 	public static boolean equipBuildingBlock(Minecraft minecraft, LocalPlayer player, Block excluded) {
-		return equip(minecraft, player,
-				stack -> isBuildingBlock(stack) && !isBlock(stack, excluded));
+		return equip(minecraft, player, scaffoldFilter(excluded));
+	}
+
+	/**
+	 * What the bot is willing to spend on the scaffolding it places to get somewhere.
+	 *
+	 * <p>Every route-placing path runs through here, which is what makes {@code scaffoldBlock} a
+	 * single honest answer to "what will this cost me" rather than a hint some call sites respect.</p>
+	 *
+	 * <p>When a block is named the filter is exactly that block — no fallback. Falling back would
+	 * defeat the point: someone who says "bridge with cobblestone" is saying which stack they are
+	 * willing to lose, and spending the diamonds once the cobble runs out is the outcome they were
+	 * guarding against. Running dry instead surfaces as {@code NO_MATERIAL}, which the controller
+	 * already handles by routing around.</p>
+	 *
+	 * <p>A named block also overrides {@code excluded}. Naming the very block being collected is
+	 * unusual, but it is unambiguous — someone who says "bridge with oak_log" while gathering oak logs
+	 * has said what they want, and second-guessing an explicit instruction with an implicit rule is
+	 * how a bot ends up refusing to move for reasons nobody can see.</p>
+	 *
+	 * @param excluded the haul the bot is out collecting, never spent, or {@code null} for none
+	 */
+	public static Predicate<ItemStack> scaffoldFilter(Block excluded) {
+		Item chosen = scaffoldItem();
+		return chosen != null
+				? stack -> stack.is(chosen)
+				: stack -> isBuildingBlockExcept(stack, excluded);
+	}
+
+	/**
+	 * The block {@code scaffoldBlock} names, or {@code null} for "anything spare".
+	 *
+	 * <p>Also {@code null} when the setting holds something unrecognised. That is deliberate: a typo
+	 * should degrade to the old behaviour rather than leave the bot unable to place anything at all,
+	 * and the setting is validated where it is written, so a bad value cannot arrive here quietly.</p>
+	 */
+	public static Item scaffoldItem() {
+		String name = BotSettings.SCAFFOLD_BLOCK.get();
+		if (name.equalsIgnoreCase(BotSettings.ANY_SCAFFOLD)) {
+			return null;
+		}
+		Identifier id = Identifier.tryParse(name.contains(":") ? name : "minecraft:" + name);
+		if (id == null) {
+			return null;
+		}
+		Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(null);
+		return item == Items.AIR ? null : item;
+	}
+
+	/** What to call the scaffolding in a message — the chosen block, or the generic description. */
+	public static String scaffoldName() {
+		Item chosen = scaffoldItem();
+		return chosen == null
+				? "building blocks"
+				: chosen.getName(chosen.getDefaultInstance()).getString();
 	}
 
 	/** A building block we are willing to spend — solid, well-behaved, and not the protected haul. */
@@ -189,7 +245,7 @@ public final class InventoryManager {
 
 	/** Whether anything is carried that we are willing to build with, ignoring {@code excluded}. */
 	public static boolean hasBuildingBlock(LocalPlayer player, Block excluded) {
-		return has(player, stack -> isBuildingBlock(stack) && !isBlock(stack, excluded));
+		return has(player, scaffoldFilter(excluded));
 	}
 
 	private static double scoreFood(ItemStack stack, int missingHunger, boolean allowRisky) {

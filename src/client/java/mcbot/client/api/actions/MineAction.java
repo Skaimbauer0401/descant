@@ -35,7 +35,9 @@ public final class MineAction implements Action {
 		return "Break the block at exact coordinates and pick up what it drops, walking there first if "
 				+ "needed. Use this to clear one known spot — to dig out a doorway, or to remove "
 				+ "something in the way. To gather a resource wherever it happens to be, use find "
-				+ "instead; this only ever breaks the one block you name.";
+				+ "instead; this only ever breaks the one block you name. Getting within reach is a "
+				+ "journey like any other, so the bot may tunnel, bridge and pillar on the way; say "
+				+ "which block to spend on that with 'scaffold'.";
 	}
 
 	@Override
@@ -43,7 +45,8 @@ public final class MineAction implements Action {
 		return List.of(
 				Parameter.required("x", ParameterType.INTEGER, "East-west coordinate of the block."),
 				Parameter.required("y", ParameterType.INTEGER, "Height of the block."),
-				Parameter.required("z", ParameterType.INTEGER, "North-south coordinate of the block."));
+				Parameter.required("z", ParameterType.INTEGER, "North-south coordinate of the block."),
+				Scaffold.PARAMETER);
 	}
 
 	@Override
@@ -51,6 +54,11 @@ public final class MineAction implements Action {
 		BlockPos target = new BlockPos(
 				arguments.getInt("x"), arguments.getInt("y"), arguments.getInt("z"));
 		ClientLevel level = context.minecraft().level;
+
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
+		}
 
 		if (!level.isLoaded(target)) {
 			return ActionResult.failed("That spot is not loaded, so there is nothing to break yet. "
@@ -70,7 +78,8 @@ public final class MineAction implements Action {
 		if (!context.controller().mineAt(context.minecraft(), context.player(), target, name(state))) {
 			return ActionResult.failed("Couldn't start on " + describe(target) + ".");
 		}
-		return ActionResult.okQuiet("Breaking the " + name(state) + " at " + describe(target) + ".");
+		return ActionResult.okQuiet("Breaking the " + name(state) + " at " + describe(target) + "."
+				+ Scaffold.note());
 	}
 
 	private static String name(BlockState state) {

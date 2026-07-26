@@ -207,6 +207,31 @@ public final class BotSettings {
 	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 2, 0, 6,
 			"Blocks the bot may mine through in one movement. 0 stops it tunnelling at all.");
 
+	// ---------------------------------------------------------------- scaffolding
+
+	/** The {@link #SCAFFOLD_BLOCK} value meaning "no preference — spend whatever is spare". */
+	public static final String ANY_SCAFFOLD = "any";
+
+	/**
+	 * Which block the bot spends on the scaffolding it places to get somewhere.
+	 *
+	 * <p>The pathfinder places blocks of its own accord — bridging gaps, pillaring upward — and this
+	 * decides what it spends. Left at {@code any} it grabs the first solid block that comes to hand,
+	 * which is fine when the pack is full of cobble and awful when the only stack left is the
+	 * player's diamond blocks.</p>
+	 *
+	 * <p>A named block is <b>strict, not preferred</b>. Running out stops the bridging and the bot
+	 * routes around instead of quietly falling back to something valuable — the whole reason for
+	 * naming one is to bound what may be spent.</p>
+	 */
+	public static final StringSetting SCAFFOLD_BLOCK = new StringSetting(
+			"scaffoldBlock", ANY_SCAFFOLD,
+			"a block id such as 'cobblestone' or 'dirt', or 'any'",
+			"Which block to spend on the bridges and pillars the bot builds to get somewhere. "
+					+ "'any' spends whatever solid block is spare, which may include something valuable. "
+					+ "A named block is never substituted: when it runs out the bot stops building and "
+					+ "routes around instead.");
+
 	// ---------------------------------------------------------------- display
 
 	/** Whether the planned route is drawn in the world. */
