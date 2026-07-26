@@ -248,6 +248,18 @@ public final class BotController {
 	/** When taking, how many to come back with; {@code 0} means everything that matches. */
 	private int depositWanted;
 
+	/**
+	 * Whether the chest turned out to have no room for the haul.
+	 *
+	 * <p>Remembered so the automatic trip does not set off again on the very next tick. Without it the
+	 * bot walks to a full chest, fails to put anything in, comes back still full, and immediately
+	 * decides it needs to go to the chest — an errand loop that never ends and never banks anything.</p>
+	 *
+	 * <p>Cleared whenever a chest is chosen or the player asks for a transfer by hand, since both are
+	 * good reasons to look again: chests get emptied, by the bot itself among others.</p>
+	 */
+	private boolean chestFull;
+
 	/** Task parked while the bot runs a deposit errand, restored when it gets back. */
 	private Goal parkedGoal;
 	private BlockPos parkedMineTarget;
@@ -1225,10 +1237,16 @@ public final class BotController {
 	/** Remembers a chest to empty the haul into, or clears it when {@code chest} is {@code null}. */
 	public void setDepositChest(BlockPos chest) {
 		this.depositChest = chest == null ? null : chest.immutable();
+		this.chestFull = false; // a newly chosen chest has not been tried yet
 	}
 
 	public BlockPos depositChest() {
 		return depositChest;
+	}
+
+	/** Whether the chest was found to have no room. Reported by {@code status}, so the AI can see it. */
+	public boolean chestFull() {
+		return chestFull;
 	}
 
 	/** The chest being emptied right now, or {@code null}. For the in-world display. */
@@ -1256,6 +1274,15 @@ public final class BotController {
 		if (InventoryManager.fullness(player) < BotSettings.DEPOSIT_FULLNESS.get()
 				|| !InventoryManager.hasHaul(player)) {
 			return false;
+		}
+		if (chestFull) {
+			// Full pack, full chest: there is nowhere for anything to go. Carrying on would mean
+			// breaking blocks whose drops cannot be picked up, which is the exact waste this trip
+			// exists to prevent — so end the job honestly instead of running on producing nothing.
+			message("Inventory full and the chest at " + format(depositChest)
+					+ " has no room either. Stopping — empty the chest, or set another with chest.");
+			stop(minecraft);
+			return true;
 		}
 
 		depositFilter = InventoryManager::isHaul; // the automatic trip never gives away the kit
@@ -1304,6 +1331,9 @@ public final class BotController {
 		depositFilter = what;
 		depositTaking = false;
 		depositWanted = 0;
+		// Asked for by hand, so try again even if it was full last time — the usual reason someone
+		// orders a deposit after being told the chest is full is that they have just emptied it.
+		chestFull = false;
 		beginDeposit(minecraft, "Taking " + describe + " to the chest at " + format(depositChest) + ".");
 		return null;
 	}
@@ -1332,6 +1362,8 @@ public final class BotController {
 		depositFilter = what;
 		depositTaking = true;
 		depositWanted = Math.max(0, count);
+		// Taking things out makes room in the chest, so whatever it was last time is now stale.
+		chestFull = false;
 		beginDeposit(minecraft, "Fetching " + describe + " from the chest at "
 				+ format(depositChest) + ".");
 		return null;
@@ -1343,6 +1375,20 @@ public final class BotController {
 				// keep transferring
 			}
 			case DONE -> finishDeposit(minecraft, true);
+			case NO_ROOM -> {
+				transfer.cancel(minecraft);
+				// The chest is kept: it is full, not broken, and forgetting it would mean the player
+				// has to set it again after emptying it. Some of the haul may well have gone across
+				// before the space ran out, so this is not necessarily a wasted trip.
+				// Only when putting in. A take that fills the *inventory* says nothing about the chest,
+				// and recording it as a full chest would make the next gathering job stop dead blaming
+				// a chest that has plenty of room.
+				chestFull = !depositTaking;
+				message(depositTaking
+						? "No room in the inventory for any more."
+						: "The chest at " + format(depositChest) + " is full.");
+				finishDeposit(minecraft, false);
+			}
 			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
 				transfer.cancel(minecraft);
 				// Could not reach or open it. Give up on banking rather than stalling the whole task —

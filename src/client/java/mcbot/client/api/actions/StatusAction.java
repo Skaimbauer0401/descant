@@ -63,10 +63,13 @@ public final class StatusAction implements Action {
 		text.append(", hunger ").append(player.getFoodData().getFoodLevel()).append("/20");
 		text.append(" | inventory ").append(Math.round(InventoryManager.fullness(player) * 100)).append("% full");
 
+		// The full flag rides along with the chest because a completed action reports this whole line
+		// back to the model, which is where it will notice that banking has stopped working and why.
 		BlockPos chest = controller.depositChest();
 		text.append(" | banking ").append(chest == null
 				? "off"
-				: "at " + chest.getX() + ", " + chest.getY() + ", " + chest.getZ());
+				: "at " + chest.getX() + ", " + chest.getY() + ", " + chest.getZ()
+						+ (controller.chestFull() ? " (FULL — no room for anything more)" : ""));
 
 		return ActionResult.ok(text.toString());
 	}

@@ -330,6 +330,11 @@ public final class AiAgent {
 				and keeps the tools, food and blocks the bot works with; pass what='food', \
 				what='all', or an item id, to hand over something specific instead. drop \
 				throws things away for good, so prefer deposit whenever a chest is set.
+				- A chest can fill up. When status shows the chest FULL, banking has stopped \
+				working and a gathering job will halt as soon as the inventory fills, \
+				because there is nowhere left to put anything. Do not just start it again. \
+				Say so, and offer the ways out: set a different chest, take something back \
+				out, or drop what is not wanted.
 				- take is the other half of deposit: it fetches things back out of the chest — \
 				coal for a smelt, planks for a build. What is in the chest is unknown until \
 				the bot gets there, so it may come back with less than asked, or nothing.""";

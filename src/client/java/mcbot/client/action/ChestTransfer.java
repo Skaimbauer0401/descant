@@ -1,5 +1,7 @@
 package mcbot.client.action;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Predicate;
 
 import mcbot.client.BotSettings;
@@ -60,6 +62,26 @@ public final class ChestTransfer {
 	private int sinceTransfer;
 
 	/**
+	 * The slot just shift-clicked, and what it held at the time.
+	 *
+	 * <p>A shift-click into a full chest is not refused, it simply does nothing — and since the stack
+	 * then sits exactly where it was, the next pass picks the same slot and clicks it again. That is
+	 * what made the bot stand at a full chest clicking forever. Remembering what was clicked is how a
+	 * click that achieved nothing gets noticed.</p>
+	 */
+	private Slot clicked;
+	private ItemStack clickedBefore = ItemStack.EMPTY;
+
+	/**
+	 * Slots the far side had no room for, by menu index.
+	 *
+	 * <p>Skipped rather than abandoned on: a chest with one free slot may still take the next stack
+	 * even though it could not take this one, and a chest holding 40 cobblestone has room for more
+	 * cobblestone while having none for iron.</p>
+	 */
+	private final Set<Integer> blocked = new HashSet<>();
+
+	/**
 	 * @param matching which stacks to move
 	 * @param taking   {@code true} to take from the chest, {@code false} to put into it
 	 * @param wanted   when taking, stop once the inventory holds this many; {@code 0} takes the lot
@@ -72,12 +94,17 @@ public final class ChestTransfer {
 		this.phase = Phase.OPENING;
 		this.ticks = 0;
 		this.sinceTransfer = 0;
+		this.clicked = null;
+		this.clickedBefore = ItemStack.EMPTY;
+		this.blocked.clear();
 	}
 
 	public void cancel(Minecraft minecraft) {
 		closeMenu(minecraft);
 		chest = null;
 		phase = null;
+		clicked = null;
+		blocked.clear();
 	}
 
 	/** The chest being used, or {@code null}. For the in-world display. */
@@ -140,6 +167,7 @@ public final class ChestTransfer {
 			return ActionState.WORKING;
 		}
 		sinceTransfer = 0;
+		reviewLastClick();
 
 		// Checked before moving anything, so asking for what is already carried moves nothing at all.
 		if (taking && wanted > 0 && carried(player) >= wanted) {
@@ -148,13 +176,39 @@ public final class ChestTransfer {
 
 		Slot next = nextSlot(player);
 		if (next == null) {
-			return finish(minecraft);
+			// Nothing left that can move. Whether that is "everything went across" or "there was
+			// nowhere to put the rest" is the difference between a finished errand and a full chest,
+			// and only the blocked list can tell them apart.
+			ActionState outcome = blocked.isEmpty() ? ActionState.DONE : ActionState.NO_ROOM;
+			finish(minecraft);
+			return outcome;
 		}
 
 		// Shift-click: moves the whole stack across without needing to know where it lands.
+		clicked = next;
+		clickedBefore = next.getItem().copy();
 		minecraft.gameMode.handleContainerInput(
 				player.containerMenu.containerId, next.index, 0, ContainerInput.QUICK_MOVE, player);
 		return ActionState.WORKING;
+	}
+
+	/**
+	 * Marks the last click as blocked if it moved nothing.
+	 *
+	 * <p>{@code handleContainerInput} applies the move to the client's own menu before sending it, so
+	 * the slot already reflects the outcome by the time this runs a tick or two later. Comparing the
+	 * whole stack rather than just emptiness is what keeps a <em>partial</em> move — a chest with room
+	 * for ten of a stack of sixty-four — counted as progress and retried.</p>
+	 */
+	private void reviewLastClick() {
+		if (clicked == null) {
+			return;
+		}
+		if (ItemStack.matches(clicked.getItem(), clickedBefore)) {
+			blocked.add(clicked.index);
+		}
+		clicked = null;
+		clickedBefore = ItemStack.EMPTY;
 	}
 
 	private ActionState finish(Minecraft minecraft) {
@@ -177,7 +231,7 @@ public final class ChestTransfer {
 	private Slot nextSlot(LocalPlayer player) {
 		for (Slot slot : player.containerMenu.slots) {
 			boolean ours = slot.container instanceof Inventory;
-			if (ours == taking) {
+			if (ours == taking || blocked.contains(slot.index)) {
 				continue; // taking wants the chest's slots; putting wants ours
 			}
 			ItemStack stack = slot.getItem();

@@ -21,6 +21,15 @@ public enum ActionState {
 	 */
 	NO_MATERIAL,
 
+	/**
+	 * There is somewhere for the items to go, but no space left in it.
+	 *
+	 * <p>Distinct from {@link #FAILED} because a full chest is not a broken chest. Treating the two
+	 * alike made the bot forget a perfectly good chest it had simply filled up, and the difference
+	 * decides whether the answer is "carry on without it" or "there is nowhere left to put anything".</p>
+	 */
+	NO_ROOM,
+
 	/** The action cannot be completed at all (unbreakable, no anchor, timed out). */
 	FAILED
 }
