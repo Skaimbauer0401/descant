@@ -1,5 +1,6 @@
 package mcbot.client;
 
+import mcbot.client.control.TravelMode;
 import mcbot.client.inventory.ChestSource;
 import mcbot.client.settings.BooleanSetting;
 import mcbot.client.settings.DoubleSetting;
@@ -206,6 +207,20 @@ public final class BotSettings {
 	/** Blocks the bot may mine through in a single move (e.g. head + feet of a wall). */
 	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 2, 0, 6,
 			"Blocks the bot may mine through in one movement. 0 stops it tunnelling at all.");
+
+	// ---------------------------------------------------------------- travelling
+
+	/**
+	 * How much of the world a journey may rearrange, when the caller does not say.
+	 *
+	 * <p>{@code try_walk} rather than {@code build}, because the destructive version should be the
+	 * one you ask for. Most trips are walkable and the ones that are not still escalate, so the
+	 * default costs a wasted search on a buried target and saves a tunnel through everything else.</p>
+	 */
+	public static final EnumSetting<TravelMode> TRAVEL_MODE = new EnumSetting<>(
+			"travelMode", TravelMode.TRY_WALK,
+			"How the bot gets somewhere when a command does not say: walk only, build from the start, "
+					+ "or try walking and only dig if there is no way on foot.");
 
 	// ---------------------------------------------------------------- scaffolding
 

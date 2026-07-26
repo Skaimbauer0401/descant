@@ -8,6 +8,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
+import mcbot.client.control.TravelMode;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalYLevel;
 import net.minecraft.core.BlockPos;
@@ -31,23 +32,22 @@ public final class GotoLevelAction implements Action {
 	public String description() {
 		return "Reach a particular height, anywhere — digging down to it or climbing up to it from "
 				+ "wherever the bot is. Use this for 'get down to diamond level', not for travelling. "
-				+ "THIS DIGS AND PLACES BLOCKS: going down means tunnelling, and going up means "
-				+ "pillaring on blocks out of the inventory. Say which block to spend with 'scaffold'.";
+				+ "It looks for a way there on foot first — caves and hillsides often provide one — and "
+				+ "falls back to tunnelling, saying so when it does. Since digging is usually the point "
+				+ "here, travel='build' saves it the wasted look.";
 	}
 
 	@Override
 	public List<Parameter> parameters() {
 		return List.of(
 				Parameter.required("y", ParameterType.INTEGER, "The height to reach."),
-				Parameter.optional("build", ParameterType.BOOLEAN,
-						"Whether the bot may mine and place blocks to get there. Default true. "
-								+ "Digging down almost always needs this."),
+				Travel.PARAMETER,
 				Scaffold.PARAMETER);
 	}
 
 	@Override
 	public ActionResult run(ActionContext context, Arguments arguments) {
-		boolean build = arguments.getBoolean("build", true);
+		TravelMode mode = Travel.mode(arguments);
 		BlockPos column = BlockPos.containing(context.player().position());
 		Goal goal = new GoalYLevel(arguments.getInt("y"), column);
 
@@ -56,8 +56,7 @@ public final class GotoLevelAction implements Action {
 			return rejected;
 		}
 
-		context.controller().navigateTo(goal, build, build);
-		return ActionResult.ok("Heading to " + goal.describe()
-				+ (build ? "." + Scaffold.note() : " (movement only, nothing will be mined or placed)."));
+		context.controller().navigateTo(goal, mode);
+		return ActionResult.ok("Heading to " + goal.describe() + "." + Travel.note(mode));
 	}
 }

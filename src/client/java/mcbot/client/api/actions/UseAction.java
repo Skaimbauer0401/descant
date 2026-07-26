@@ -44,7 +44,8 @@ public final class UseAction implements Action {
 		return List.of(
 				Parameter.optional("x", ParameterType.INTEGER, "East-west coordinate of the block."),
 				Parameter.optional("y", ParameterType.INTEGER, "Height of the block."),
-				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the block."));
+				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the block."),
+				Travel.PARAMETER);
 	}
 
 	@Override
@@ -79,7 +80,7 @@ public final class UseAction implements Action {
 
 		String what = BuiltInRegistries.BLOCK
 				.getKey(context.minecraft().level.getBlockState(target).getBlock()).getPath();
-		context.controller().useBlock(context.minecraft(), player, target);
+		context.controller().useBlock(context.minecraft(), player, target, Travel.mode(arguments));
 		return ActionResult.okQuiet("Using the " + what + " at " + target.getX() + ", " + target.getY()
 				+ ", " + target.getZ() + ".");
 	}

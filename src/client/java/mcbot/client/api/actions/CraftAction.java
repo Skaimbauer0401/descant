@@ -49,7 +49,8 @@ public final class CraftAction implements Action {
 						"The item id to make, such as 'crafting_table', 'stick' or 'furnace'."),
 				Parameter.optional("count", ParameterType.INTEGER,
 						"How many times to run the recipe. Default 1. Note a recipe often yields "
-								+ "several — one stick recipe makes four sticks."));
+								+ "several — one stick recipe makes four sticks."),
+				Travel.PARAMETER);
 	}
 
 	@Override
@@ -91,7 +92,8 @@ public final class CraftAction implements Action {
 			}
 		}
 
-		context.controller().craft(context.minecraft(), player, recipe.id(), table, count, wanted);
+		context.controller().craft(context.minecraft(), player, recipe.id(), table, count, wanted,
+				Travel.mode(arguments));
 		int perCraft = recipe.result().getCount();
 		return ActionResult.okQuiet("Crafting " + wanted + " x" + (count * perCraft)
 				+ (table == null ? " here." : " at the crafting table."));

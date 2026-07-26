@@ -8,6 +8,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
+import mcbot.client.control.TravelMode;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -36,8 +37,9 @@ public final class MineAction implements Action {
 				+ "needed. Use this to clear one known spot — to dig out a doorway, or to remove "
 				+ "something in the way. To gather a resource wherever it happens to be, use find "
 				+ "instead; this only ever breaks the one block you name. Getting within reach is a "
-				+ "journey like any other, so the bot may tunnel, bridge and pillar on the way; say "
-				+ "which block to spend on that with 'scaffold'.";
+				+ "journey like any other: by default the bot WALKS there and only digs its way in if "
+				+ "there is no route on foot, which is what a buried block needs. The named block is "
+				+ "broken either way — travel only governs how the bot reaches it.";
 	}
 
 	@Override
@@ -46,6 +48,7 @@ public final class MineAction implements Action {
 				Parameter.required("x", ParameterType.INTEGER, "East-west coordinate of the block."),
 				Parameter.required("y", ParameterType.INTEGER, "Height of the block."),
 				Parameter.required("z", ParameterType.INTEGER, "North-south coordinate of the block."),
+				Travel.PARAMETER,
 				Scaffold.PARAMETER);
 	}
 
@@ -55,6 +58,7 @@ public final class MineAction implements Action {
 				arguments.getInt("x"), arguments.getInt("y"), arguments.getInt("z"));
 		ClientLevel level = context.minecraft().level;
 
+		TravelMode mode = Travel.mode(arguments);
 		ActionResult rejected = Scaffold.choose(arguments);
 		if (rejected != null) {
 			return rejected;
@@ -75,11 +79,12 @@ public final class MineAction implements Action {
 			return ActionResult.failed(name(state) + " at " + describe(target) + " cannot be broken.");
 		}
 
-		if (!context.controller().mineAt(context.minecraft(), context.player(), target, name(state))) {
+		if (!context.controller().mineAt(context.minecraft(), context.player(), target, name(state),
+				mode)) {
 			return ActionResult.failed("Couldn't start on " + describe(target) + ".");
 		}
 		return ActionResult.okQuiet("Breaking the " + name(state) + " at " + describe(target) + "."
-				+ Scaffold.note());
+				+ Travel.note(mode));
 	}
 
 	private static String name(BlockState state) {

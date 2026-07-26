@@ -63,7 +63,8 @@ public final class SmeltAction implements Action {
 						"How many to smelt. Defaults to everything carried, up to a furnace load of 64. "
 								+ "Remember it takes about 10 seconds each."),
 				Parameter.optional("fuel", ParameterType.STRING,
-						"Which fuel to burn, such as 'coal'. Leave it out to let the bot choose."));
+						"Which fuel to burn, such as 'coal'. Leave it out to let the bot choose."),
+				Travel.PARAMETER);
 	}
 
 	@Override
@@ -112,7 +113,8 @@ public final class SmeltAction implements Action {
 					+ " blocks. Craft one with craft(item=furnace) and place it, or travel to one.");
 		}
 
-		context.controller().smelt(minecraft, player, furnace, input, fuel.getItem(), count, wanted);
+		context.controller().smelt(minecraft, player, furnace, input, fuel.getItem(), count, wanted,
+				Travel.mode(arguments));
 		return ActionResult.okQuiet("Smelting " + count + " " + wanted + " into "
 				+ InventoryAction.id(result.getItem()) + ", burning "
 				+ pieces + " " + InventoryAction.id(fuel.getItem()) + ".");

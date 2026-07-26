@@ -8,6 +8,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
+import mcbot.client.control.TravelMode;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalBlock;
 import mcbot.client.path.goal.GoalXZ;
@@ -33,10 +34,9 @@ public final class GotoAction implements Action {
 		return "Travel to a location, pathfinding around, over and through whatever is in the way. "
 				+ "Leave out 'y' unless you specifically need a particular height — without it the bot "
 				+ "arrives at ground level, which is almost always what you want for a journey. "
-				+ "THIS PLACES BLOCKS: getting there is not only walking, and the bot will bridge "
-				+ "across gaps and water and pillar up cliffs, spending blocks out of its inventory to "
-				+ "do it. Say which block to spend with 'scaffold', or pass build=false to keep it to "
-				+ "routes it can walk without touching the world.";
+				+ "By default it WALKS there and only starts mining and bridging if there turns out to "
+				+ "be no way on foot, saying so when it does. Pass travel='walk' to forbid that "
+				+ "outright, or travel='build' to let it dig from the start.";
 	}
 
 	@Override
@@ -46,9 +46,7 @@ public final class GotoAction implements Action {
 				Parameter.required("z", ParameterType.INTEGER, "North-south coordinate of the destination."),
 				Parameter.optional("y", ParameterType.INTEGER,
 						"Height. Omit to arrive at ground level, whatever that turns out to be."),
-				Parameter.optional("build", ParameterType.BOOLEAN,
-						"Whether the bot may mine and place blocks to get there. Default true. "
-								+ "False keeps it to routes it can walk, leaving the world untouched."),
+				Travel.PARAMETER,
 				Scaffold.PARAMETER);
 	}
 
@@ -56,7 +54,7 @@ public final class GotoAction implements Action {
 	public ActionResult run(ActionContext context, Arguments arguments) {
 		int x = arguments.getInt("x");
 		int z = arguments.getInt("z");
-		boolean build = arguments.getBoolean("build", true);
+		TravelMode mode = Travel.mode(arguments);
 
 		ActionResult rejected = Scaffold.choose(arguments);
 		if (rejected != null) {
@@ -72,8 +70,7 @@ public final class GotoAction implements Action {
 			goal = new GoalXZ(x, z, (int) Math.floor(context.player().getY()));
 		}
 
-		context.controller().navigateTo(goal, build, build);
-		return ActionResult.ok("Heading to " + goal.describe()
-				+ (build ? "." + Scaffold.note() : " (movement only, nothing will be mined or placed)."));
+		context.controller().navigateTo(goal, mode);
+		return ActionResult.ok("Heading to " + goal.describe() + "." + Travel.note(mode));
 	}
 }

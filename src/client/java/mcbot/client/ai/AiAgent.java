@@ -274,12 +274,24 @@ public final class AiAgent {
 				- Coordinates are x (east), z (south) and y (height). Sea level is about y=63.
 				- For travelling, use goto with x and z and no y. Naming a height means guessing \
 				the terrain and the bot will tunnel or pillar to reach your number.
-				- GOING SOMEWHERE COSTS BLOCKS. goto, gotoLevel, find, mine and place all \
-				travel, and travelling is not only walking: the bot bridges across gaps and \
-				water and pillars up cliffs, spending blocks straight out of its inventory. \
-				Left to itself it spends the first solid block it finds, which may be the \
-				thing you were sent to fetch.
-				- So on any of those five, pass scaffold with a cheap block the bot is \
+				- HOW THE BOT TRAVELS IS YOUR CHOICE. goto, gotoLevel, mine, place, craft, \
+				smelt and use all have to get somewhere first, and they take a travel \
+				argument: 'walk' never touches the world and fails if there is no way on \
+				foot, 'build' mines and bridges from the start, 'try_walk' walks and only \
+				digs if there turns out to be no route. The default is try_walk, and when \
+				it does give up on walking it says so in chat before it starts digging.
+				- Pass travel='walk' near anything the player has built — a base, a farm, a \
+				road. A tunnel through someone's wall cannot be undone by apologising. \
+				Pass travel='build' only when digging is plainly part of the job, such as \
+				gotoLevel down to diamond level, where it saves a pointless look for a \
+				walking route.
+				- find is the exception: it has no travel argument and always digs, because \
+				what it is going to is usually buried.
+				- GOING SOMEWHERE COSTS BLOCKS whenever digging is allowed. The bot bridges \
+				across gaps and water and pillars up cliffs, spending blocks straight out \
+				of its inventory, and left to itself it spends the first solid block it \
+				finds — which may be the thing you were sent to fetch.
+				- So on any command that may build, pass scaffold with a cheap block the bot is \
 				carrying — cobblestone, dirt, cobbled_deepslate, netherrack — and SAY IN \
 				YOUR REPLY which one you chose. Check inventory first if you do not know \
 				what is aboard. Pass scaffold='any' only when the player has said they do \
@@ -287,7 +299,8 @@ public final class AiAgent {
 				also covers the short walks the other commands make.
 				- A named scaffold block is never substituted. When it runs out the bot \
 				stops building and routes around, so if it has none, gather some first — \
-				find with target='stone' or 'dirt' and a count of 64 is the usual answer.
+				find with target='stone' or 'dirt' and a count of 64 is the usual answer. \
+				With travel='walk' none of this matters, since nothing gets placed.
 				- find and mine are BLUNT about how they reach a target. The bot takes the \
 				shortest route and tunnels through whatever is in the way, including \
 				digging straight down. It will not dig into lava it can see, or take a \

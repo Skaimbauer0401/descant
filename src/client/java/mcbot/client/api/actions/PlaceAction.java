@@ -10,6 +10,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
+import mcbot.client.control.TravelMode;
 import mcbot.client.inventory.InventoryManager;
 import mcbot.client.path.WorldView;
 import net.minecraft.client.player.LocalPlayer;
@@ -48,10 +49,9 @@ public final class PlaceAction implements Action {
 		return "Put a block down. Give x, y and z for an exact spot, or leave them out to place it on "
 				+ "the ground just in front of the bot, which is usually what you want for a furnace "
 				+ "or a crafting table. The block has to be in the inventory already — check with "
-				+ "'inventory'. THIS TRAVELS: if the spot is out of reach the bot walks there by "
-				+ "itself, exactly as goto would — tunnelling, bridging and pillaring on the way and "
-				+ "spending blocks to do it — so for a distant spot say which block to spend with "
-				+ "'scaffold', or send it there with goto first if the route matters. The named block "
+				+ "'inventory'. THIS TRAVELS: if the spot is out of reach the bot goes there by itself, "
+				+ "exactly as goto would. By default it WALKS, and only mines and bridges if there is no "
+				+ "way on foot — pass travel='walk' to forbid that near anything built. The named block "
 				+ "is what gets placed at the spot; 'scaffold' is only what is spent getting there.";
 	}
 
@@ -63,6 +63,7 @@ public final class PlaceAction implements Action {
 				Parameter.optional("x", ParameterType.INTEGER, "East-west coordinate of the spot."),
 				Parameter.optional("y", ParameterType.INTEGER, "Height of the spot."),
 				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the spot."),
+				Travel.PARAMETER,
 				Scaffold.PARAMETER);
 	}
 
@@ -80,6 +81,7 @@ public final class PlaceAction implements Action {
 			return ActionResult.failed("No " + wanted + " in the inventory to place.");
 		}
 
+		TravelMode mode = Travel.mode(arguments);
 		ActionResult rejected = Scaffold.choose(arguments);
 		if (rejected != null) {
 			return rejected;
@@ -116,13 +118,13 @@ public final class PlaceAction implements Action {
 					+ " to place against. Pick a spot touching the ground or a wall.");
 		}
 
-		context.controller().buildAt(context.minecraft(), player, target, item);
+		context.controller().buildAt(context.minecraft(), player, target, item, mode);
 		// The scaffolding note only earns its space when there is actually a journey. Saying what will
 		// be spent bridging to a block already at arm's length is noise on every torch the bot places.
 		boolean travels = player.getEyePosition().distanceTo(Vec3.atCenterOf(target))
 				> BotSettings.REACH.get();
 		return ActionResult.okQuiet("Placing " + wanted + " at " + describe(target) + "."
-				+ (travels ? Scaffold.note() : ""));
+				+ (travels ? Travel.note(mode) : ""));
 	}
 
 	/**

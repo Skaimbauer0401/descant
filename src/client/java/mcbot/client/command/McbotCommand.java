@@ -24,6 +24,7 @@ import mcbot.client.api.Action;
 import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.BotApi;
+import mcbot.client.control.TravelMode;
 import mcbot.client.inventory.ChestSource;
 import mcbot.client.settings.Setting;
 import mcbot.client.settings.SettingRegistry;
@@ -39,10 +40,11 @@ import net.minecraft.resources.Identifier;
  * The {@code /mcbot} chat commands.
  *
  * <pre>
- *   /mcbot goto &lt;x&gt; &lt;y&gt; &lt;z&gt;        travel to that block, mining and bridging as needed
+ *   /mcbot goto &lt;x&gt; &lt;y&gt; &lt;z&gt;        travel to that block, walking if it can and digging if it must
  *   /mcbot goto &lt;x&gt; &lt;z&gt;            travel to that column, at whatever height the ground is
  *   /mcbot goto &lt;y&gt;                reach that height, anywhere
  *   /mcbot walk  &lt;same forms&gt;      as above, but without modifying the world
+ *   /mcbot dig   &lt;same forms&gt;      as above, mining and bridging from the start
  *   /mcbot find &lt;block|mob&gt; [true|false] [count]
  *                                  go to the nearest block or mob. Add `true` to mine or kill
  *                                  it, sweep up the drops and move on to the next; the default
@@ -91,8 +93,9 @@ public final class McbotCommand {
 
 	public void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
 		dispatcher.register(ClientCommands.literal("mcbot")
-				.then(ClientCommands.literal("goto").then(coordinates(true)))
-				.then(ClientCommands.literal("walk").then(coordinates(false)))
+				.then(ClientCommands.literal("goto").then(coordinates(TravelMode.TRY_WALK)))
+				.then(ClientCommands.literal("walk").then(coordinates(TravelMode.WALK)))
+				.then(ClientCommands.literal("dig").then(coordinates(TravelMode.BUILD)))
 				.then(ClientCommands.literal("find")
 						.then(ClientCommands.<String>argument("target", StringArgumentType.greedyString())
 								.suggests((context, builder) -> SharedSuggestionProvider.suggestResource(
@@ -186,22 +189,22 @@ public final class McbotCommand {
 	 * second number means different things depending on whether a third follows — Brigadier has one
 	 * node per position, so the interpretation has to happen in the handler.</p>
 	 */
-	private RequiredArgumentBuilder<FabricClientCommandSource, Integer> coordinates(boolean build) {
+	private RequiredArgumentBuilder<FabricClientCommandSource, Integer> coordinates(TravelMode mode) {
 		return ClientCommands.<Integer>argument("first", IntegerArgumentType.integer())
 				.executes(context -> run(context, "gotoLevel", Arguments.of(
 						"y", IntegerArgumentType.getInteger(context, "first"),
-						"build", build)))
+						"travel", mode.key())))
 				.then(ClientCommands.<Integer>argument("second", IntegerArgumentType.integer())
 						.executes(context -> run(context, "goto", Arguments.of(
 								"x", IntegerArgumentType.getInteger(context, "first"),
 								"z", IntegerArgumentType.getInteger(context, "second"),
-								"build", build)))
+								"travel", mode.key())))
 						.then(ClientCommands.<Integer>argument("third", IntegerArgumentType.integer())
 								.executes(context -> run(context, "goto", Arguments.of(
 										"x", IntegerArgumentType.getInteger(context, "first"),
 										"y", IntegerArgumentType.getInteger(context, "second"),
 										"z", IntegerArgumentType.getInteger(context, "third"),
-										"build", build)))));
+										"travel", mode.key())))));
 	}
 
 	/** {@code /mcbot find <block|mob> [true|false] [count]}. */

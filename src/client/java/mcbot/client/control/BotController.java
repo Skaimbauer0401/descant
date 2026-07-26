@@ -119,6 +119,17 @@ public final class BotController {
 	private boolean allowBreak = true;
 	private boolean allowPlace = true;
 
+	/**
+	 * What the current journey is allowed to do to the world.
+	 *
+	 * <p>Held alongside {@link #allowBreak} rather than replacing it because they answer different
+	 * questions: the mode is what was <em>asked for</em> and does not change, while the flags are what
+	 * is permitted <em>right now</em> and do. Under {@link TravelMode#TRY_WALK} the flags start false
+	 * and are turned on if the walk fails, and it is exactly that gap between the two that says an
+	 * escalation is still available.</p>
+	 */
+	private TravelMode travelMode = TravelMode.BUILD;
+
 	/** Sprint-jumping across gaps. Movement-only (no world edits), so it is allowed even on walk. */
 	private boolean allowParkour = true;
 
@@ -316,16 +327,20 @@ public final class BotController {
 	// ---------------------------------------------------------------- public control
 
 	/** Starts navigating to one exact block. Replaces any journey already in progress. */
-	public void navigateTo(BlockPos goal, boolean allowBreak, boolean allowPlace) {
-		navigateTo(new GoalBlock(goal), allowBreak, allowPlace);
+	public void navigateTo(BlockPos goal, TravelMode mode) {
+		navigateTo(new GoalBlock(goal), mode);
 	}
 
 	/** Starts pursuing {@code goal}. Replaces any journey already in progress. */
-	public void navigateTo(Goal goal, boolean allowBreak, boolean allowPlace) {
+	public void navigateTo(Goal goal, TravelMode mode) {
 		this.goal = goal;
-		this.allowBreak = allowBreak;
-		this.allowPlace = allowPlace;
-		this.allowPlaceRequested = allowPlace;
+		this.travelMode = mode;
+		// TRY_WALK starts out exactly like WALK. The difference only shows up when the journey fails,
+		// which is the earliest moment there is any evidence that walking will not do.
+		boolean building = mode.buildsImmediately();
+		this.allowBreak = building;
+		this.allowPlace = building;
+		this.allowPlaceRequested = building;
 		this.resumeGoal = null;
 		this.planFailures = 0;
 		this.cooldown = 0;
@@ -371,7 +386,7 @@ public final class BotController {
 		// collision at all and get walked straight through, never broken. Approaching and mining
 		// explicitly sidesteps every one of these shape assumptions.
 		BlockPos destination = approachPosition(minecraft, player, found);
-		navigateTo(destination, true, true);
+		navigateTo(destination, TravelMode.BUILD);
 
 		this.mineTarget = execute ? found : null;
 		this.mineTargetBlock = execute ? block : null;
@@ -391,7 +406,8 @@ public final class BotController {
 	 * @return a sentence describing what will happen, or {@code null} if it cannot be done — in which
 	 *         case nothing has been started and the caller should say why itself
 	 */
-	public boolean buildAt(Minecraft minecraft, LocalPlayer player, BlockPos target, Item item) {
+	public boolean buildAt(Minecraft minecraft, LocalPlayer player, BlockPos target, Item item,
+			TravelMode mode) {
 		this.buildTarget = target.immutable();
 		this.buildItem = item;
 
@@ -405,7 +421,7 @@ public final class BotController {
 
 		// Otherwise treat it exactly like a block to be mined: stand somewhere within reach and act
 		// from there, letting the ordinary pathfinder work out how to get to that spot.
-		navigateTo(approachPosition(minecraft, player, target), true, true);
+		navigateTo(approachPosition(minecraft, player, target), mode);
 		return true;
 	}
 
@@ -415,7 +431,7 @@ public final class BotController {
 	 * @param table {@code null} to use the inventory's 2x2 grid, which needs no journey
 	 */
 	public void craft(Minecraft minecraft, LocalPlayer player, RecipeDisplayId recipe, BlockPos table,
-			int count, String name) {
+			int count, String name, TravelMode mode) {
 		this.craftRecipe = recipe;
 		this.craftTable = table == null ? null : table.immutable();
 		this.craftCount = count;
@@ -429,7 +445,7 @@ public final class BotController {
 			status = Status.CRAFTING;
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, table), true, true);
+		navigateTo(approachPosition(minecraft, player, table), mode);
 	}
 
 	/**
@@ -437,7 +453,7 @@ public final class BotController {
 	 *
 	 */
 	public void smelt(Minecraft minecraft, LocalPlayer player, BlockPos furnace, Item input,
-			Item fuel, int count, String name) {
+			Item fuel, int count, String name, TravelMode mode) {
 		this.smeltFurnace = furnace.immutable();
 		this.smeltInput = input;
 		this.smeltFuel = fuel;
@@ -450,7 +466,7 @@ public final class BotController {
 			status = Status.SMELTING;
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, furnace), true, true);
+		navigateTo(approachPosition(minecraft, player, furnace), mode);
 	}
 
 	private void tickSmelting(Minecraft minecraft, LocalPlayer player) {
@@ -491,13 +507,14 @@ public final class BotController {
 	 *
 	 * @return whether there was anything there to break
 	 */
-	public boolean mineAt(Minecraft minecraft, LocalPlayer player, BlockPos target, String name) {
+	public boolean mineAt(Minecraft minecraft, LocalPlayer player, BlockPos target, String name,
+			TravelMode mode) {
 		BlockState state = minecraft.level.getBlockState(target);
 		if (state.isAir()) {
 			return false;
 		}
 
-		navigateTo(approachPosition(minecraft, player, target), true, true);
+		navigateTo(approachPosition(minecraft, player, target), mode);
 		mineTarget = target.immutable();
 		mineTargetBlock = state.getBlock();
 		digTarget = target.immutable();
@@ -513,7 +530,7 @@ public final class BotController {
 	}
 
 	/** Right-clicks a block, walking to it first if it is out of reach. */
-	public void useBlock(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+	public void useBlock(Minecraft minecraft, LocalPlayer player, BlockPos target, TravelMode mode) {
 		this.useTarget = target.immutable();
 		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()) {
 			rightClick(minecraft, player, useTarget);
@@ -523,7 +540,7 @@ public final class BotController {
 			input.clear();
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, target), true, true);
+		navigateTo(approachPosition(minecraft, player, target), mode);
 	}
 
 	/**
@@ -695,7 +712,7 @@ public final class BotController {
 		// block buys a precision that is already wrong — and standing *in* an entity is not a place you
 		// can be anyway. Getting within arm's length is the actual requirement, and close-range pursuit
 		// takes over from there.
-		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), true, true);
+		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), TravelMode.BUILD);
 		huntedBlock = null;
 		huntedType = type;
 		// Hold on to the individual only when hunting it down; otherwise this is a one-off trip to
@@ -2605,11 +2622,57 @@ public final class BotController {
 		message("Arrived at " + describeGoal() + ".");
 	}
 
+	/**
+	 * Ends the journey — unless walking was only ever the first attempt, in which case it escalates.
+	 *
+	 * <p>Both of the ways a journey can end for good come through here, which is why the escalation
+	 * lives here too rather than at either of them. Triggering on the failure is also what makes
+	 * {@link TravelMode#TRY_WALK} worth having: a walk-only search that cannot reach the goal usually
+	 * returns a <em>partial</em> route, so the bot walks as far as the terrain allows and only digs
+	 * from wherever that turned out to be — which is often most of the way there.</p>
+	 */
 	private void fail(Minecraft minecraft, String reason) {
+		if (escalateTravel(minecraft)) {
+			return;
+		}
 		resetPlan(minecraft);
 		status = Status.FAILED;
 		input.clear();
 		message(reason);
+	}
+
+	/**
+	 * Turns on mining and building after a walk-only attempt has failed.
+	 *
+	 * <p>{@code allowBreak} doubles as the record of whether this has already happened. In
+	 * {@code TRY_WALK} it starts false and only this method sets it, so finding it still false means
+	 * the escalation is unused — no second flag to keep in step. ({@code allowPlace} could not do the
+	 * job: it gets switched off and on again by running out of blocks mid-journey.)</p>
+	 *
+	 * @return whether the journey was upgraded and should carry on
+	 */
+	private boolean escalateTravel(Minecraft minecraft) {
+		if (travelMode != TravelMode.TRY_WALK || allowBreak || goal == null) {
+			return false;
+		}
+		allowBreak = true;
+		allowPlace = true;
+		allowPlaceRequested = true;
+
+		// The stuck detector's memory has to go with them. Its counters record how a *walking* bot
+		// fared, and a bot that may now dig deserves to be judged on its own attempt rather than
+		// inheriting a strike count that would fail it almost immediately.
+		planFailures = 0;
+		fruitlessReplans = 0;
+		bestGoalDistance = Double.MAX_VALUE;
+
+		// Deliberately not the caller's reason. Those sentences end in "giving up", which is exactly
+		// what this is not doing — the walk gave up, the journey did not.
+		message("No way to " + describeGoal() + " on foot — mining and building through instead."
+				+ (InventoryManager.scaffoldItem() == null
+						? "" : " Bridging with " + InventoryManager.scaffoldName() + "."));
+		replan(minecraft);
+		return true;
 	}
 
 	private void message(String text) {
