@@ -33,17 +33,25 @@ public final class LocateAction implements Action {
 
 	@Override
 	public String description() {
-		return "Report the exact coordinates of the nearest block of a kind, and how far away it is, "
-				+ "without moving the bot. Costs nothing. Use it to check whether something already "
-				+ "exists nearby — a crafting table, a furnace, a chest — before deciding whether to "
-				+ "walk to it, place one, or go somewhere else. To actually go there, pass the "
-				+ "coordinates to goto, or use find.";
+		return "Report the exact coordinates of the nearest blocks of a kind, and how far away each is, "
+				+ "without moving the bot. Costs nothing. Gives several by default, nearest first, so "
+				+ "you can compare them — which of three furnaces is closest, whether the ore is all in "
+				+ "one direction, whether it is worth going at all. Results are spread out, so a vein "
+				+ "of ore is reported once rather than filling the list with its own blocks. Use it to "
+				+ "check whether something already exists nearby before deciding whether to walk to it, "
+				+ "place one, or go somewhere else. To actually go there, pass one set of coordinates "
+				+ "to goto, or use find.";
 	}
 
 	@Override
 	public List<Parameter> parameters() {
-		return List.of(Parameter.required("block", ParameterType.STRING,
-				"The block id to look for, such as 'crafting_table', 'furnace' or 'diamond_ore'."));
+		return List.of(
+				Parameter.required("block", ParameterType.STRING,
+						"The block id to look for, such as 'crafting_table', 'furnace' or 'diamond_ore'."),
+				Parameter.optional("count", ParameterType.INTEGER,
+						"How many to report at most, nearest first. Defaults to the locateCount "
+								+ "setting. Ask for 1 when you only need somewhere to go, and more when "
+								+ "you are working out where things are."));
 	}
 
 	@Override
@@ -53,13 +61,18 @@ public final class LocateAction implements Action {
 		if (block == null) {
 			return ActionResult.failed(ItemNames.unknownBlock(wanted));
 		}
+		int count = arguments.getInt("count", BotSettings.LOCATE_COUNT.get());
+		if (count < 1) {
+			return ActionResult.failed("'count' must be at least 1.");
+		}
 
 		BlockPos from = BlockPos.containing(context.player().position());
 		int radius = BotSettings.BLOCK_SEARCH_RADIUS.get();
-		BlockPos found = BlockSearcher.findNearest(
-				context.minecraft().level, from, radius, state -> state.is(block));
+		List<BlockPos> found = BlockSearcher.findNearest(
+				context.minecraft().level, from, radius, count, BotSettings.LOCATE_SPACING.get(),
+				state -> state.is(block));
 
-		if (found == null) {
+		if (found.isEmpty()) {
 			// Worth saying why rather than just "no": the search only sees loaded chunks, so "none
 			// here" and "none in the world" are different answers and only one of them means give up.
 			return ActionResult.failed("No " + wanted + " within " + radius + " blocks of "
@@ -67,8 +80,20 @@ public final class LocateAction implements Action {
 					+ "else and asking again may well find one.");
 		}
 
-		return ActionResult.ok(wanted + " at " + describe(found) + ", "
-				+ Math.round(Math.sqrt(found.distSqr(from))) + " blocks away.");
+		StringBuilder text = new StringBuilder();
+		text.append(found.size()).append("x ").append(wanted);
+		// A short list means the search ran out of matches, not that it stopped counting — and those
+		// are different facts. "All there is" tells the caller not to bother asking for more.
+		if (found.size() < count) {
+			text.append(" — all there is within ").append(radius).append(" blocks");
+		}
+		text.append(": ");
+		for (int index = 0; index < found.size(); index++) {
+			BlockPos pos = found.get(index);
+			text.append(index == 0 ? "" : "; ").append(describe(pos))
+					.append(" (").append(Math.round(Math.sqrt(pos.distSqr(from)))).append(" away)");
+		}
+		return ActionResult.ok(text.append(".").toString());
 	}
 
 	private static String describe(BlockPos pos) {

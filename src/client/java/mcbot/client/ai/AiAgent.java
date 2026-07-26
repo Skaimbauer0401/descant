@@ -320,9 +320,12 @@ public final class AiAgent {
 				inventory and keep going instead of stopping when full.
 				- status tells you where the bot is, its health and hunger, and how full it is; \
 				inventory tells you exactly what it is carrying; locate gives the exact \
-				coordinates of the nearest block of a kind without going there. All three \
-				cost nothing, so call them rather than guessing — locate before deciding \
-				whether to walk to something or place your own.
+				coordinates of the nearest several blocks of a kind, nearest first, \
+				without going there. All three cost nothing, so call them rather than \
+				guessing — locate before deciding whether to walk to something or place \
+				your own, and read the whole list: which of three furnaces is closest, \
+				whether the ore is all in one direction, whether the nearest one is so \
+				far that the trip is not worth it.
 				- look describes the surroundings: coordinates, which way it faces, dimension, \
 				biome, time of day, weather, light, and every creature nearby. Free, like \
 				the other two.

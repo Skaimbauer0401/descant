@@ -53,7 +53,7 @@ import net.minecraft.resources.Identifier;
  *   /mcbot chest [looking|nearest|off]    pick the container to bank the haul in
  *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
  *   /mcbot mine &lt;x&gt; &lt;y&gt; &lt;z&gt;        break the block at that exact spot
- *   /mcbot locate &lt;block&gt;          report where the nearest one is, without moving
+ *   /mcbot locate &lt;block&gt; [count]  report where the nearest ones are, without moving
  *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
  *   /mcbot smelt &lt;item&gt; [count]    run a furnace: find it, load it, wait, collect
@@ -143,7 +143,11 @@ public final class McbotCommand {
 								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
 										BuiltInRegistries.BLOCK.keySet().stream().map(Identifier::getPath), builder))
 								.executes(context -> run(context, "locate", Arguments.of(
-										"block", StringArgumentType.getString(context, "block"))))))
+										"block", StringArgumentType.getString(context, "block"))))
+								.then(ClientCommands.<Integer>argument("count", IntegerArgumentType.integer(1))
+										.executes(context -> run(context, "locate", Arguments.of(
+												"block", StringArgumentType.getString(context, "block"),
+												"count", IntegerArgumentType.getInteger(context, "count")))))))
 				.then(ClientCommands.literal("inventory")
 						.executes(context -> run(context, "inventory", Arguments.none())))
 				.then(ClientCommands.literal("take")

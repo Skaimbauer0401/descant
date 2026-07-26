@@ -208,6 +208,23 @@ public final class BotSettings {
 	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 2, 0, 6,
 			"Blocks the bot may mine through in one movement. 0 stops it tunnelling at all.");
 
+	// ---------------------------------------------------------------- locating
+
+	/** How many places {@code locate} reports when it is not told a number. */
+	public static final IntSetting LOCATE_COUNT = new IntSetting("locateCount", 5, 1, 30,
+			"How many places 'locate' reports by default.");
+
+	/**
+	 * Minimum gap between the places {@code locate} reports.
+	 *
+	 * <p>Ore comes in veins. Without a gap, "the five nearest iron_ore" is five blocks of the same
+	 * vein — a correct answer to the question asked and no use at all for deciding where to go. Four
+	 * blocks is enough to separate veins while still listing two furnaces side by side as two.</p>
+	 */
+	public static final IntSetting LOCATE_SPACING = new IntSetting("locateSpacing", 4, 0, 64,
+			"How far apart the places 'locate' reports must be, so a vein counts once. 0 lists "
+					+ "neighbouring blocks separately.");
+
 	// ---------------------------------------------------------------- travelling
 
 	/**

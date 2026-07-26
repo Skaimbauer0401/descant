@@ -1,5 +1,9 @@
 package mcbot.client.path;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.PriorityQueue;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -43,19 +47,51 @@ public final class BlockSearcher {
 	 *                {@code accept}, or matches will be missed
 	 */
 	public static BlockPos findNearest(ClientLevel level, BlockPos origin, int radius,
-			Predicate<BlockState> palette, java.util.function.BiPredicate<BlockPos, BlockState> accept) {
+			Predicate<BlockState> palette, BiPredicate<BlockPos, BlockState> accept) {
+		List<BlockPos> found = findNearest(level, origin, radius, 1, 0, palette, accept);
+		return found.isEmpty() ? null : found.get(0);
+	}
+
+	/** The {@code count} nearest matches, closest first, judged on the block alone. */
+	public static List<BlockPos> findNearest(ClientLevel level, BlockPos origin, int radius, int count,
+			int spacing, Predicate<BlockState> wanted) {
+		return findNearest(level, origin, radius, count, spacing, wanted,
+				(pos, state) -> wanted.test(state));
+	}
+
+	/**
+	 * The {@code count} nearest matches, closest first.
+	 *
+	 * <p>One implementation serves both this and the single-result form above, which take the same
+	 * pruning decisions in the same places. Two copies of that reasoning would be two copies to keep
+	 * correct, and the single-block version is only the case where {@code count} is one.</p>
+	 *
+	 * @param count   how many to return at most; anything below one returns nothing
+	 * @param spacing minimum distance between results, or {@code 0} to allow neighbours. Ore comes in
+	 *                veins, so without this "the eight nearest iron_ore" is eight blocks of the same
+	 *                vein — technically the answer, and useless for deciding where to go
+	 */
+	public static List<BlockPos> findNearest(ClientLevel level, BlockPos origin, int radius, int count,
+			int spacing, Predicate<BlockState> palette, BiPredicate<BlockPos, BlockState> accept) {
+		if (count <= 0) {
+			return List.of();
+		}
 		int chunkRadius = (radius >> 4) + 1;
 		int originChunkX = origin.getX() >> 4;
 		int originChunkZ = origin.getZ() >> 4;
-		long radiusSqr = (long) radius * radius;
+		double radiusSqr = (double) radius * radius;
 
-		BlockPos best = null;
-		double bestDistance = Double.MAX_VALUE;
+		// A max-heap, so the head is the *worst* of the ones being kept. That is both the entry to
+		// evict when a better one turns up and the cutoff for whether a candidate is worth testing at
+		// all — one structure answering both questions.
+		PriorityQueue<Hit> kept = new PriorityQueue<>(count,
+				Comparator.comparingDouble(Hit::distanceSqr).reversed());
 
-		// Expanding rings of chunks: once a match is found, chunks further out than the current
-		// best cannot beat it, so the search stops early on the common case of a nearby hit.
+		// Expanding rings of chunks: once the quota is filled, chunks further out than the current
+		// worst kept match cannot beat it, so the search stops early on the common case of nearby hits.
 		for (int ring = 0; ring <= chunkRadius; ring++) {
-			if (best != null && (double) (ring - 1) * 16.0 > bestDistance) {
+			if (kept.size() >= count
+					&& (double) (ring - 1) * 16.0 > Math.sqrt(kept.peek().distanceSqr())) {
 				break;
 			}
 			for (int dx = -ring; dx <= ring; dx++) {
@@ -69,31 +105,28 @@ public final class BlockSearcher {
 					if (chunk == null) {
 						continue;
 					}
-
-					BlockPos found = searchChunk(level, chunk, origin, radiusSqr, palette, accept,
-							bestDistance);
-					if (found != null) {
-						double distance = Math.sqrt(found.distSqr(origin));
-						if (distance < bestDistance) {
-							bestDistance = distance;
-							best = found;
-						}
-					}
+					searchChunk(level, chunk, origin, radiusSqr, count, spacing, palette, accept, kept);
 				}
 			}
 		}
-		return best;
+
+		return kept.stream()
+				.sorted(Comparator.comparingDouble(Hit::distanceSqr))
+				.map(Hit::pos)
+				.toList();
 	}
 
-	private static BlockPos searchChunk(ClientLevel level, LevelChunk chunk, BlockPos origin,
-			long radiusSqr, Predicate<BlockState> palette,
-			java.util.function.BiPredicate<BlockPos, BlockState> accept, double bestDistance) {
-		LevelChunkSection[] sections = chunk.getSections();
-		BlockPos best = null;
-		double best2 = bestDistance;
+	/** One accepted match and how far it is, squared — the ordering key, never square-rooted. */
+	private record Hit(BlockPos pos, double distanceSqr) {
+	}
 
+	private static void searchChunk(ClientLevel level, LevelChunk chunk, BlockPos origin,
+			double radiusSqr, int count, int spacing, Predicate<BlockState> palette,
+			BiPredicate<BlockPos, BlockState> accept, PriorityQueue<Hit> kept) {
+		LevelChunkSection[] sections = chunk.getSections();
 		int baseX = chunk.getPos().getMinBlockX();
 		int baseZ = chunk.getPos().getMinBlockZ();
+		double spacingSqr = (double) spacing * spacing;
 
 		for (int index = 0; index < sections.length; index++) {
 			LevelChunkSection section = sections[index];
@@ -112,18 +145,43 @@ public final class BlockSearcher {
 						}
 						BlockPos pos = new BlockPos(baseX + x, baseY + y, baseZ + z);
 						double distanceSqr = pos.distSqr(origin);
-						if (distanceSqr > radiusSqr || distanceSqr >= best2 * best2) {
+						if (distanceSqr > radiusSqr) {
 							continue;
 						}
-						if (!accept.test(pos, state)) {
+						// Full already, and no closer than the worst we are holding: nothing to gain,
+						// and skipping before accept.test keeps the expensive test off the hot path.
+						if (kept.size() >= count && distanceSqr >= kept.peek().distanceSqr()) {
 							continue;
 						}
-						best2 = Math.sqrt(distanceSqr);
-						best = pos;
+						if (crowds(kept, pos, spacingSqr) || !accept.test(pos, state)) {
+							continue;
+						}
+						kept.add(new Hit(pos, distanceSqr));
+						if (kept.size() > count) {
+							kept.poll();
+						}
 					}
 				}
 			}
 		}
-		return best;
+	}
+
+	/**
+	 * Whether {@code pos} sits too close to a match already held.
+	 *
+	 * <p>Approximate on purpose. Evicting a kept match can leave the one it crowded out unrecorded, so
+	 * the result is "one per cluster, roughly" rather than a guaranteed spread — which is all a report
+	 * of where things are needs to be, and it costs one short scan instead of a second pass.</p>
+	 */
+	private static boolean crowds(PriorityQueue<Hit> kept, BlockPos pos, double spacingSqr) {
+		if (spacingSqr <= 0.0) {
+			return false;
+		}
+		for (Hit hit : kept) {
+			if (hit.pos().distSqr(pos) < spacingSqr) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
