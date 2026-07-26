@@ -1,5 +1,6 @@
 package mcbot.client;
 
+import mcbot.client.ai.AiProvider;
 import mcbot.client.control.TravelMode;
 import mcbot.client.inventory.ChestSource;
 import mcbot.client.settings.BooleanSetting;
@@ -304,13 +305,34 @@ public final class BotSettings {
 	public static final StringSetting AI_CLOUD_MODEL = new StringSetting(
 			"aiCloudModel", "minimax-m3:cloud",
 			"an Ollama cloud model name",
-			"The cloud model, used when aiCloud is on. Needs 'ollama signin' once. Much stronger than "
+			"The cloud model, used when aiProvider is 'cloud'. Needs 'ollama signin' once. Stronger than "
 					+ "anything local, at the cost of sending the conversation off this machine. "
 					+ "nemotron-3-ultra:cloud is heavier but far slower.");
 
-	/** Which of the two models to use. */
-	public static final BooleanSetting AI_CLOUD = new BooleanSetting("aiCloud", false,
-			"Use aiCloudModel instead of aiModel. Off keeps everything on this machine.");
+	/**
+	 * Claude's model id.
+	 *
+	 * <p>Haiku by default. Choosing between twenty functions and getting their order right is a task
+	 * the small model is good at, and the difference in cost between it and Sonnet is far larger than
+	 * the difference in how well the bot behaves.</p>
+	 */
+	public static final StringSetting AI_CLAUDE_MODEL = new StringSetting(
+			"aiClaudeModel", "claude-haiku-4-5-20251001",
+			"an Anthropic model id",
+			"Which Claude model to use when aiProvider is 'claude'. Haiku is the cheap, fast one and "
+					+ "is well suited to picking actions; claude-sonnet-4-5 is stronger and dearer.");
+
+	/**
+	 * Where the model comes from.
+	 *
+	 * <p>Defaults to {@code local}: the one that costs nothing, needs no account and sends nothing
+	 * anywhere. A default that quietly bills someone would be the wrong way round, however cheap.</p>
+	 */
+	public static final EnumSetting<AiProvider> AI_PROVIDER = new EnumSetting<>(
+			"aiProvider", AiProvider.LOCAL,
+			"Which model drives the bot: a local Ollama model, an Ollama cloud model, or Anthropic's "
+					+ "API. 'claude' needs an ANTHROPIC_API_KEY in the environment and is billed per "
+					+ "token — a Claude Pro subscription does not cover API use.");
 
 	/** Where the Ollama daemon is. Cloud models go through it too. */
 	public static final StringSetting AI_HOST = new StringSetting(

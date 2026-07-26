@@ -51,7 +51,6 @@ public final class AiAgent {
 
 	private final BotApi api;
 	private final Consumer<Component> chat;
-	private final LlmProvider provider;
 
 	/** One thread, daemon, so an in-flight request can never hold the game open on exit. */
 	private final ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
@@ -65,7 +64,6 @@ public final class AiAgent {
 
 	public AiAgent(BotApi api, Consumer<Component> chat) {
 		this.api = api;
-		this.provider = new OllamaProvider();
 
 		// Everything this class says comes from the worker thread, and putting a line in chat touches
 		// the GUI — which throws "RenderSystem called from wrong thread" rather than doing anything
@@ -93,9 +91,14 @@ public final class AiAgent {
 		if (running) {
 			return ActionResult.failed("Already working on something. /mcbot ai stop first.");
 		}
+		// Built per run, not once at startup. The provider reads its model name and host from settings
+		// the player can change mid-session, and one built in the constructor would go on using
+		// whatever was selected when the game loaded — so '/mcbot set aiProvider claude' would appear
+		// to do nothing until a restart.
+		LlmProvider provider = BotSettings.AI_PROVIDER.get().create();
 		running = true;
 		cancelled = false;
-		worker.submit(() -> converse(goal.trim()));
+		worker.submit(() -> converse(provider, goal.trim()));
 		return ActionResult.ok("Asking " + provider.describe() + ": " + goal.trim());
 	}
 
@@ -118,7 +121,7 @@ public final class AiAgent {
 
 	// ---------------------------------------------------------------- the loop
 
-	private void converse(String goal) {
+	private void converse(LlmProvider provider, String goal) {
 		Minecraft minecraft = Minecraft.getInstance();
 		int maxSteps = BotSettings.AI_MAX_STEPS.get();
 

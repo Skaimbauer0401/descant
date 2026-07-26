@@ -40,14 +40,17 @@ public final class OllamaProvider implements LlmProvider {
 
 	@Override
 	public String describe() {
-		return (BotSettings.AI_CLOUD.get() ? "ollama cloud " : "ollama local ") + model();
+		return (cloud() ? "ollama cloud " : "ollama local ") + model();
+	}
+
+	/** Whether the selected provider is Ollama's cloud rather than this machine. */
+	private static boolean cloud() {
+		return BotSettings.AI_PROVIDER.get() == AiProvider.CLOUD;
 	}
 
 	/** Whichever of the two models is currently selected. */
 	private static String model() {
-		return BotSettings.AI_CLOUD.get()
-				? BotSettings.AI_CLOUD_MODEL.get()
-				: BotSettings.AI_MODEL.get();
+		return cloud() ? BotSettings.AI_CLOUD_MODEL.get() : BotSettings.AI_MODEL.get();
 	}
 
 	@Override
@@ -237,7 +240,7 @@ public final class OllamaProvider implements LlmProvider {
 		if (lower.contains("llama-server") || lower.contains("binary not found")) {
 			return "Your Ollama install is missing its local runner (llama-server), so no local model "
 					+ "can start. Reinstall Ollama from ollama.com — or use a cloud model instead with "
-					+ "'/mcbot set aiCloud true', which is proxied and does not need it.";
+					+ "'/mcbot set aiProvider cloud', which is proxied and does not need it.";
 		}
 		if (status == 410 || lower.contains("was retired")) {
 			return model() + " has been retired by Ollama. Pick a current one — "
@@ -262,7 +265,7 @@ public final class OllamaProvider implements LlmProvider {
 			// Hit for real while testing: the free tier returns 429 with "session usage limit", which
 			// matches none of the words one would think to look for.
 			return "Out of Ollama cloud allowance for " + model() + " — it resets after a while. "
-					+ "Switch to the local model meanwhile with '/mcbot set aiCloud false'.";
+					+ "Switch to the local model meanwhile with '/mcbot set aiProvider local'.";
 		}
 		return "Ollama returned HTTP " + status + ": " + brief(body);
 	}
