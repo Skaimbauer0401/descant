@@ -61,7 +61,9 @@ import net.minecraft.resources.Identifier;
  *   /mcbot inventory               list what is carried
  *   /mcbot deposit [haul|food|all|&lt;item&gt;]  stash it now; defaults to the haul
  *   /mcbot take &lt;food|all|&lt;item&gt;&gt; [count]  fetch it back out of the chest
- *   /mcbot equip &lt;item&gt; | drop &lt;item&gt; [count]
+ *   /mcbot equip &lt;item&gt; [auto|hand|offhand]  hold it, wear it, or off-hand it
+ *   /mcbot armour                  put on the best armour carried
+ *   /mcbot drop &lt;item&gt; [count]
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
  *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
@@ -115,6 +117,8 @@ public final class McbotCommand {
 														"y", IntegerArgumentType.getInteger(context, "y"),
 														"z", IntegerArgumentType.getInteger(context, "z"))))))))
 				.then(equip())
+				.then(ClientCommands.literal("armour")
+						.executes(context -> run(context, "armour", Arguments.none())))
 				.then(drop())
 				.then(ClientCommands.literal("look")
 						.executes(context -> run(context, "look", Arguments.none())))
@@ -311,13 +315,19 @@ public final class McbotCommand {
 														"z", IntegerArgumentType.getInteger(context, "z"))))))));
 	}
 
-	/** {@code /mcbot equip <item>}. */
+	/** {@code /mcbot equip <item> [auto|hand|offhand]}. */
 	private LiteralArgumentBuilder<FabricClientCommandSource> equip() {
 		return ClientCommands.literal("equip")
 				.then(ClientCommands.<String>argument("item", StringArgumentType.word())
 						.suggests(McbotCommand::suggestItems)
 						.executes(context -> run(context, "equip", Arguments.of(
-								"item", StringArgumentType.getString(context, "item")))));
+								"item", StringArgumentType.getString(context, "item"))))
+						.then(ClientCommands.<String>argument("where", StringArgumentType.word())
+								.suggests((context, builder) -> SharedSuggestionProvider.suggest(
+										Stream.of("auto", "hand", "offhand"), builder))
+								.executes(context -> run(context, "equip", Arguments.of(
+										"item", StringArgumentType.getString(context, "item"),
+										"where", StringArgumentType.getString(context, "where"))))));
 	}
 
 	/** {@code /mcbot drop <item> [count]} — without a count, all of them. */

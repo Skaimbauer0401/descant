@@ -3,6 +3,7 @@ package mcbot.client.api;
 import mcbot.client.BotSettings;
 import mcbot.client.api.actions.ChestAction;
 import mcbot.client.api.actions.CraftAction;
+import mcbot.client.api.actions.ArmourAction;
 import mcbot.client.api.actions.DepositAction;
 import mcbot.client.api.actions.DropAction;
 import mcbot.client.api.actions.EquipAction;
@@ -62,6 +63,7 @@ public final class BotApi {
 		actions.register(new MineAction());
 		actions.register(new InventoryAction());
 		actions.register(new EquipAction());
+		actions.register(new ArmourAction());
 		actions.register(new DropAction());
 		actions.register(new DepositAction());
 		actions.register(new TakeAction());

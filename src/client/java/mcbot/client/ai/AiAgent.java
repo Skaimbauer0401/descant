@@ -345,6 +345,16 @@ public final class AiAgent {
 				- use right-clicks a block: levers, buttons, doors, gates, beds. It will open a \
 				smithing table or an anvil but cannot put anything into one — smelting is the \
 				only station work the bot can do.
+				- armour puts on the best helmet, chestplate, leggings and boots the bot is \
+				carrying. It only ever upgrades, so calling it costs nothing when there is \
+				nothing better — call it after looting a chest, after crafting armour, and \
+				before anything dangerous. Worn armour is NOT part of the inventory list; \
+				inventory reports it separately, so a piece that stops appearing among the \
+				items has been put on, not lost.
+				- equip is for one specific thing. It wears armour and off-hands a shield by \
+				itself, so equip item='iron_chestplate' puts it on. Pass where='offhand' to \
+				keep torches or blocks in the off hand while a tool stays in the main hand, \
+				or where='hand' to hold a piece of armour instead of wearing it.
 				- deposit stashes things in the chest on demand. By default it banks the haul \
 				and keeps the tools, food and blocks the bot works with; pass what='food', \
 				what='all', or an item id, to hand over something specific instead. drop \

@@ -40,8 +40,10 @@ public final class InventoryAction implements Action {
 	@Override
 	public ActionResult run(ActionContext context, Arguments arguments) {
 		Map<Item, Integer> contents = InventoryManager.contents(context.player());
+		String equipment = describeEquipment(context);
+
 		if (contents.isEmpty()) {
-			return ActionResult.ok("Carrying nothing at all.");
+			return ActionResult.ok("Carrying nothing at all. " + equipment);
 		}
 
 		String listed = contents.entrySet().stream()
@@ -55,7 +57,23 @@ public final class InventoryAction implements Action {
 		ItemStack held = context.player().getMainHandItem();
 		return ActionResult.ok("Carrying: " + listed
 				+ " | holding: " + (held.isEmpty() ? "nothing" : id(held.getItem()))
+				+ " | " + equipment
 				+ " | " + Math.round(InventoryManager.fullness(context.player()) * 100) + "% of slots used");
+	}
+
+	/**
+	 * What is worn and off-handed.
+	 *
+	 * <p>Reported here because worn armour is <em>not</em> in the inventory — the equipment slots are a
+	 * separate container — so without this a piece of armour vanishes from the bot's own account of
+	 * itself the moment it is put on, and the model concludes it was lost.</p>
+	 */
+	private static String describeEquipment(ActionContext context) {
+		String listed = InventoryManager.worn(context.player()).entrySet().stream()
+				.filter(entry -> !entry.getValue().isEmpty())
+				.map(entry -> entry.getKey().getName() + ": " + id(entry.getValue().getItem()))
+				.collect(Collectors.joining(", "));
+		return listed.isEmpty() ? "wearing nothing" : "wearing " + listed;
 	}
 
 	/**

@@ -21,12 +21,14 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
+import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.EntityBlock;
@@ -465,6 +467,162 @@ public final class InventoryManager {
 	/** Whether the bot is carrying anything worth a trip to a chest. */
 	public static boolean hasHaul(LocalPlayer player) {
 		return has(player, InventoryManager::isHaul);
+	}
+
+	// ---------------------------------------------------------------- wearing
+
+	/**
+	 * The four armour slots, helmet first.
+	 *
+	 * <p>Ordered the way the inventory screen draws them, so anything that walks the list reads in the
+	 * order a person would expect to be told about it.</p>
+	 */
+	public static final List<EquipmentSlot> ARMOUR_SLOTS =
+			List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
+
+	/**
+	 * Where this item belongs when worn, or {@code null} if it is not wearable at all.
+	 *
+	 * <p>Read from the item's own {@code EQUIPPABLE} component rather than from a list of armour
+	 * items, so a carved pumpkin, an elytra and a mob head are all handled without being named — and so
+	 * are whatever else future versions decide can be worn.</p>
+	 */
+	public static EquipmentSlot wearSlot(ItemStack stack) {
+		Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+		return equippable == null ? null : equippable.slot();
+	}
+
+	/** What is worn in each slot, empty stacks included, helmet first. */
+	public static Map<EquipmentSlot, ItemStack> worn(LocalPlayer player) {
+		Map<EquipmentSlot, ItemStack> equipment = new LinkedHashMap<>();
+		for (EquipmentSlot slot : ARMOUR_SLOTS) {
+			equipment.put(slot, player.getItemBySlot(slot));
+		}
+		equipment.put(EquipmentSlot.OFFHAND, player.getItemBySlot(EquipmentSlot.OFFHAND));
+		return equipment;
+	}
+
+	/**
+	 * Puts a specific item on, in whichever equipment slot is asked for.
+	 *
+	 * @param slot where it should end up: an armour slot, or {@link EquipmentSlot#OFFHAND}
+	 * @return whether it is now there
+	 */
+	public static boolean wearItem(Minecraft minecraft, LocalPlayer player, Item item,
+			EquipmentSlot slot) {
+		return moveToEquipment(minecraft, player, findSlot(player, stack -> stack.is(item)), slot);
+	}
+
+	/**
+	 * Puts on the best armour carried for one slot, if it beats what is already there.
+	 *
+	 * @return the piece now worn, or an empty stack when nothing was worth changing to
+	 */
+	public static ItemStack wearBestArmour(Minecraft minecraft, LocalPlayer player,
+			EquipmentSlot slot) {
+		Inventory inventory = player.getInventory();
+		int bestSlot = -1;
+		// Starting from what is already on means an equal piece is left alone. Swapping like for like
+		// would be three clicks, a durability-neutral shuffle, and a line of chat saying nothing.
+		double bestScore = armourScore(player.getItemBySlot(slot), slot);
+
+		for (int candidate = 0; candidate < inventory.getContainerSize(); candidate++) {
+			double score = armourScore(inventory.getItem(candidate), slot);
+			if (score > bestScore) {
+				bestScore = score;
+				bestSlot = candidate;
+			}
+		}
+
+		if (bestSlot < 0) {
+			return ItemStack.EMPTY;
+		}
+		ItemStack chosen = inventory.getItem(bestSlot).copy();
+		return moveToEquipment(minecraft, player, bestSlot, slot) ? chosen : ItemStack.EMPTY;
+	}
+
+	/**
+	 * How good a piece of armour is for a slot, as a number only good for ranking.
+	 *
+	 * <p>Armour points plus toughness, read off the item's own attributes for the same reason
+	 * {@link #weaponScore} does: netherite and diamond give the same armour and differ only in
+	 * toughness, so leaving it out would call them equal and never upgrade. Zero for anything that is
+	 * not armour for this slot at all, which is what keeps a carved pumpkin off the bot's head.</p>
+	 */
+	private static double armourScore(ItemStack stack, EquipmentSlot slot) {
+		if (stack.isEmpty() || wearSlot(stack) != slot) {
+			return 0.0;
+		}
+		ItemAttributeModifiers modifiers = stack.get(DataComponents.ATTRIBUTE_MODIFIERS);
+		if (modifiers == null) {
+			return 0.0;
+		}
+		return modifiers.compute(Attributes.ARMOR, 0.0, slot)
+				+ modifiers.compute(Attributes.ARMOR_TOUGHNESS, 0.0, slot);
+	}
+
+	/**
+	 * Moves an inventory slot's contents onto the body, swapping out whatever was there.
+	 *
+	 * <p>Three ordinary clicks, exactly as a person makes them: take the item, put it on and pick up
+	 * what it displaced, then drop that into the slot the new piece came from. The cursor is always
+	 * empty afterwards, in all three of the cases that can arise — the equipment slot was empty, it
+	 * held something, or it refused the item entirely. That last one is why this is safe: an armour
+	 * slot will not accept a piece that does not belong in it, so a mistake about which slot is which
+	 * ends with the item back where it started rather than a boot on the bot's head.</p>
+	 *
+	 * @param inventorySlot an {@link Inventory} index, or {@code -1} for "nothing found"
+	 */
+	private static boolean moveToEquipment(Minecraft minecraft, LocalPlayer player, int inventorySlot,
+			EquipmentSlot slot) {
+		int target = equipmentMenuSlot(slot);
+		if (inventorySlot < 0 || target < 0) {
+			return false;
+		}
+		if (minecraft.gameMode == null || minecraft.gameMode.isServerControlledInventory()) {
+			return false;
+		}
+		if (player.containerMenu != player.inventoryMenu) {
+			return false; // another container is open; leave its slots alone
+		}
+
+		Item wanted = player.getInventory().getItem(inventorySlot).getItem();
+		int source = menuSlot(inventorySlot);
+		click(minecraft, player, source);
+		click(minecraft, player, target);
+		click(minecraft, player, source);
+
+		// Checked rather than assumed. The click is applied to the menu here and now, so this reads the
+		// real outcome — and an action that reports success while the armour sits in a pocket is worse
+		// than one that admits it failed.
+		return player.getItemBySlot(slot).is(wanted);
+	}
+
+	/** An ordinary left click on one menu slot. */
+	private static void click(Minecraft minecraft, LocalPlayer player, int menuSlot) {
+		minecraft.gameMode.handleContainerInput(
+				player.inventoryMenu.containerId, menuSlot, 0, ContainerInput.PICKUP, player);
+	}
+
+	/**
+	 * Where a piece of equipment sits in the player's own inventory menu.
+	 *
+	 * <p>Written out rather than derived from {@link EquipmentSlot#getIndex()}, which numbers armour
+	 * from the boots upwards while the menu lists it from the helmet down. Deriving one from the other
+	 * is an inversion that reads as correct and is wrong in the game.</p>
+	 *
+	 * @return {@code -1} for the slots a player has no square for: the main hand, and the body and
+	 *         saddle slots that belong to animals
+	 */
+	private static int equipmentMenuSlot(EquipmentSlot slot) {
+		return switch (slot) {
+			case HEAD -> InventoryMenu.ARMOR_SLOT_START;
+			case CHEST -> InventoryMenu.ARMOR_SLOT_START + 1;
+			case LEGS -> InventoryMenu.ARMOR_SLOT_START + 2;
+			case FEET -> InventoryMenu.ARMOR_SLOT_START + 3;
+			case OFFHAND -> InventoryMenu.SHIELD_SLOT;
+			case MAINHAND, BODY, SADDLE -> -1;
+		};
 	}
 
 	// ---------------------------------------------------------------- naming things
