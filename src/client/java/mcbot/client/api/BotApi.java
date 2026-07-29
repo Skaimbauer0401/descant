@@ -23,6 +23,7 @@ import mcbot.client.api.actions.StopAction;
 import mcbot.client.api.actions.ToggleAction;
 import mcbot.client.api.actions.UseAction;
 import mcbot.client.control.BotController;
+import mcbot.client.settings.SettingRegistry;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 
@@ -49,6 +50,10 @@ public final class BotApi {
 		// Force the settings to register before anything asks what they are — several actions offer
 		// the setting names as argument values, and would otherwise offer an empty list.
 		BotSettings.load();
+		// Then whatever was changed last time. This order is required, not stylistic: settings
+		// register themselves as they are constructed, so applying saved values first would be
+		// applying them to an empty registry.
+		SettingRegistry.load();
 
 		actions.register(new GotoAction());
 		actions.register(new GotoLevelAction());

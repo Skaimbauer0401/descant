@@ -57,6 +57,21 @@ public abstract class Setting {
 	 */
 	public abstract void parse(String raw);
 
+	/**
+	 * Applies a value and remembers it for next time.
+	 *
+	 * <p>The door every deliberate change should use. {@link #parse} on its own only changes the
+	 * running game, and a setting that quietly reverts at the next restart is worse than one that
+	 * cannot be changed at all — it looks as though it worked.</p>
+	 *
+	 * @return whether it was written to disk. False means the change holds for this session only, and
+	 *         the caller has just told someone it would last
+	 */
+	public final boolean change(String raw) {
+		parse(raw);
+		return SettingRegistry.save();
+	}
+
 	/** Whether the setting still holds the value it shipped with. */
 	public abstract boolean isDefault();
 

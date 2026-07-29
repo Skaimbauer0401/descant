@@ -23,9 +23,15 @@ public final class BooleanSetting extends Setting {
 		this.value = newValue;
 	}
 
-	/** Flips the value and hands back the new one, for the toggle commands. */
+	/**
+	 * Flips the value and hands back the new one, for the toggle commands.
+	 *
+	 * <p>Saves, for the same reason {@link Setting#change} does: a toggle is a deliberate change, and
+	 * one that forgets itself overnight is the more confusing kind of broken.</p>
+	 */
 	public boolean toggle() {
 		value = !value;
+		SettingRegistry.save();
 		return value;
 	}
 

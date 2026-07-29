@@ -35,7 +35,8 @@ public final class SetAction implements Action {
 		return "Read or change one of the bot's settings. With no arguments it lists the settings that "
 				+ "have been changed from their defaults; with a name it reports that setting's current "
 				+ "value, what it does and what values it accepts; with a name and a value it changes it. "
-				+ "Settings persist until changed back and affect everything the bot does afterwards.";
+				+ "A change affects everything the bot does afterwards and is remembered across "
+				+ "restarts, so it stays until it is changed back.";
 	}
 
 	@Override
@@ -68,8 +69,12 @@ public final class SetAction implements Action {
 		String previous = setting.asString();
 		// Any complaint about the value comes back as IllegalArgumentException carrying a sentence
 		// explaining what would have been accepted; the registry turns that into a failed result.
-		setting.parse(arguments.getString("value"));
-		return ActionResult.ok(setting.name() + ": " + previous + " → " + setting.asString() + ".");
+		boolean saved = setting.change(arguments.getString("value"));
+		return ActionResult.ok(setting.name() + ": " + previous + " → " + setting.asString() + "."
+				// Said plainly rather than left to be discovered: the whole point of a setting is that it
+				// stays set, and finding out otherwise after a restart is how an hour gets wasted.
+				+ (saved ? "" : " (Couldn't write " + SettingRegistry.file()
+						+ ", so this lasts until the game closes.)"));
 	}
 
 	private static String listing() {

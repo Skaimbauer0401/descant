@@ -1,10 +1,18 @@
 package mcbot.client.settings;
 
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
+
+import net.fabricmc.loader.api.FabricLoader;
 
 /**
  * Every setting the bot has, looked up by name.
@@ -63,5 +71,83 @@ public final class SettingRegistry {
 
 	private static String key(String name) {
 		return name.toLowerCase(Locale.ROOT);
+	}
+
+	// ---------------------------------------------------------------- remembering
+
+	private static final String FILE_NAME = "mcbot.properties";
+
+	/** Where changed settings are kept: {@code config/mcbot.properties} beside the game. */
+	public static Path file() {
+		return FabricLoader.getInstance().getConfigDir().resolve(FILE_NAME);
+	}
+
+	/**
+	 * Applies whatever was saved last time.
+	 *
+	 * <p>Called once at startup, after {@link mcbot.client.BotSettings#load()} has brought the settings
+	 * into existence — an empty registry would have nothing to apply anything to.</p>
+	 *
+	 * <p>Entries that no longer make sense are skipped rather than complained about: a setting removed
+	 * in a later version, or a value that has since been given a narrower range, are both the mod's
+	 * doing rather than the reader's, and neither is worth an error message at startup. The file is
+	 * rewritten on the next change, which drops them.</p>
+	 */
+	public static void load() {
+		Path file = file();
+		if (!Files.isReadable(file)) {
+			return;
+		}
+		Properties stored = new Properties();
+		try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			stored.load(reader);
+		} catch (IOException | IllegalArgumentException e) {
+			return;
+		}
+
+		for (String name : stored.stringPropertyNames()) {
+			Setting setting = get(name);
+			if (setting == null) {
+				continue;
+			}
+			try {
+				setting.parse(stored.getProperty(name));
+			} catch (RuntimeException e) {
+				// Was valid when it was written and is not now. Leaving it at the default is the only
+				// sensible reading of a value the setting itself refuses.
+			}
+		}
+	}
+
+	/**
+	 * Writes the settings that differ from their defaults.
+	 *
+	 * <p>Only those. Recording all seventy-nine would freeze every default at whatever it happened to
+	 * be the first time the file was written, so a later improvement to one would never reach anyone
+	 * who had never touched it — the settings would silently stop being maintainable.</p>
+	 *
+	 * @return whether it was written; a caller that has just promised a change should say so if not
+	 */
+	static boolean save() {
+		StringBuilder text = new StringBuilder("""
+				# mcbot settings. Written whenever one is changed with /mcbot set or /mcbot toggle.
+				#
+				# Only settings changed from their defaults appear here, so anything left out follows
+				# whatever the current version thinks is best. Delete a line to go back to that.
+				# Names this version does not know are ignored.
+
+				""");
+		for (Setting setting : modified()) {
+			text.append(setting.name()).append('=').append(setting.asString()).append('\n');
+		}
+
+		Path file = file();
+		try {
+			Files.createDirectories(file.getParent());
+			Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
+			return true;
+		} catch (IOException e) {
+			return false;
+		}
 	}
 }
