@@ -2,6 +2,7 @@ package mcbot.client.api.actions;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionContext;
@@ -89,9 +90,12 @@ public final class FindAction implements Action {
 		// without it every typo would silently become a hunt for empty space.
 		Optional<Block> block = BuiltInRegistries.BLOCK.getOptional(id);
 		if (block.isPresent() && (block.get() != Blocks.AIR || raw.endsWith("air"))) {
+			// Ores come in stone-type variants, and asking for diamond_ore below y=0 would otherwise
+			// find nothing at the exact depth where every diamond in the world is.
+			Set<Block> family = BlockFamily.of(block.get());
 			boolean found = context.controller().huntFor(
-					context.minecraft(), context.player(), block.get(),
-					block.get().getName().getString(), execute);
+					context.minecraft(), context.player(), family,
+					BlockFamily.describe(family), execute);
 			if (!found) {
 				return ActionResult.failedQuiet("No " + raw + " in range. Travel somewhere else and try again.");
 			}

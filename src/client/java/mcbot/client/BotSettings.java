@@ -377,6 +377,16 @@ public final class BotSettings {
 					+ "'yes, do that' has something to refer to. 0 turns it off. Lines older than ten "
 					+ "minutes are never included.");
 
+	/**
+	 * When a held or worn item counts as nearly worn out.
+	 *
+	 * <p>Ten percent, which on an iron pickaxe is about 25 swings — enough warning to walk back and
+	 * still finish the tunnel, and not so early that every long job opens with a complaint.</p>
+	 */
+	public static final IntSetting LOW_DURABILITY = new IntSetting("lowDurability", 10, 0, 100,
+			"The percentage of durability at which a held or worn item is reported as nearly worn out. "
+					+ "The AI is told once per run, per item. 0 turns the warnings off.");
+
 	/** How long to wait for the model to reply. Cloud round-trips on a big model are not quick. */
 	public static final IntSetting AI_REQUEST_TIMEOUT = new IntSetting(
 			"aiRequestTimeout", 180, 5, 900,

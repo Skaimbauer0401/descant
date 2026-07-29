@@ -625,6 +625,42 @@ public final class InventoryManager {
 		};
 	}
 
+	// ---------------------------------------------------------------- wear and tear
+
+	/**
+	 * Everything in use that is close to breaking, held and worn.
+	 *
+	 * <p>Only what is <em>equipped</em>. A spare pickaxe rotting in the pack is not a problem yet, and
+	 * a warning about it is one the reader cannot act on — whereas the tool actually in the hand is
+	 * about to disappear mid-job, which is the moment before every avoidable disaster the bot has.</p>
+	 *
+	 * @param percent the share of durability at or below which something counts as nearly worn out
+	 */
+	public static List<ItemStack> nearlyBroken(LocalPlayer player, int percent) {
+		List<ItemStack> failing = new ArrayList<>();
+		consider(failing, player.getMainHandItem(), percent);
+		for (ItemStack stack : worn(player).values()) {
+			consider(failing, stack, percent);
+		}
+		return failing;
+	}
+
+	/** Uses left in something damageable, or {@code -1} when it cannot break. */
+	public static int usesLeft(ItemStack stack) {
+		return stack.isEmpty() || !stack.isDamageableItem()
+				? -1
+				: stack.getMaxDamage() - stack.getDamageValue();
+	}
+
+	private static void consider(List<ItemStack> failing, ItemStack stack, int percent) {
+		int left = usesLeft(stack);
+		// Multiplied out rather than divided, so a tool with an odd maximum does not round its way past
+		// the threshold and get missed.
+		if (left >= 0 && left * 100 <= stack.getMaxDamage() * percent) {
+			failing.add(stack);
+		}
+	}
+
 	// ---------------------------------------------------------------- naming things
 
 	/** Puts a specific item in the main hand. @return false when the player has none */

@@ -2,7 +2,9 @@ package mcbot.client.ai;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -15,8 +17,13 @@ import mcbot.client.Transcript;
 import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.BotApi;
+import mcbot.client.inventory.InventoryManager;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * Lets a language model drive the bot.
@@ -125,9 +132,13 @@ public final class AiAgent {
 
 	// ---------------------------------------------------------------- the loop
 
+	/** Items already reported as nearly worn out this run, so each is mentioned once. */
+	private final Set<Item> warned = new HashSet<>();
+
 	private void converse(LlmProvider provider, String goal, List<String> recent) {
 		Minecraft minecraft = Minecraft.getInstance();
 		int maxSteps = BotSettings.AI_MAX_STEPS.get();
+		warned.clear(); // each run gets told once, so a warning ignored last time is repeated
 
 		try {
 			LlmProvider.Session session = provider.begin(systemPrompt(), api.actions().schema());
@@ -157,7 +168,11 @@ public final class AiAgent {
 						break;
 					}
 					say("→ " + call.describe());
-					outcomes.add(new LlmProvider.ToolOutcome(call, runToCompletion(minecraft, call)));
+					// The warning rides along with the result rather than arriving on its own, because
+					// a tool outcome is the only thing the model reads. Anything said outside one is
+					// said to nobody.
+					outcomes.add(new LlmProvider.ToolOutcome(call,
+							runToCompletion(minecraft, call) + gearWarning(minecraft)));
 				}
 				if (cancelled) {
 					say("Stopped.");
@@ -179,6 +194,38 @@ public final class AiAgent {
 		} finally {
 			running = false;
 		}
+	}
+
+	/**
+	 * A note about anything held or worn that is close to breaking, or nothing at all.
+	 *
+	 * <p>Said once per item per run. Repeating it on every call would be honest and useless: the
+	 * warning would still be true fifty calls later, by which time it has become part of the wallpaper
+	 * and the model has stopped reading it. Once is a thing to act on.</p>
+	 */
+	private String gearWarning(Minecraft minecraft) {
+		int percent = BotSettings.LOW_DURABILITY.get();
+		LocalPlayer player = minecraft.player;
+		if (percent <= 0 || player == null) {
+			return "";
+		}
+
+		List<String> fresh = new ArrayList<>();
+		for (ItemStack stack : InventoryManager.nearlyBroken(player, percent)) {
+			if (warned.add(stack.getItem())) {
+				fresh.add(BuiltInRegistries.ITEM.getKey(stack.getItem()).getPath()
+						+ " (" + InventoryManager.usesLeft(stack) + " uses left)");
+			}
+		}
+		if (fresh.isEmpty()) {
+			return "";
+		}
+
+		String warning = "Warning: nearly worn out — " + String.join(", ", fresh)
+				+ ". It will break and vanish. Craft or fetch a replacement before carrying on with "
+				+ "anything long, or the bot ends up digging with its hands.";
+		say(warning);
+		return " " + warning;
 	}
 
 	/**
@@ -344,6 +391,26 @@ public final class AiAgent {
 				- If the player says "some", or does not say how many, choose a sensible number \
 				yourself: about a stack of a common material, 10 to 20 of an ore.
 				- Blocks and mobs are named by Minecraft id: iron_ore, oak_log, cow.
+				- ORES ARE FOUND BY DEPTH, and locate and find only see loaded terrain — roughly \
+				what is within a few hundred blocks. So "no diamond_ore in range" at y=70 means \
+				nothing at all; the bot is simply nowhere near any. Travel to the right height \
+				FIRST with goto, then look. Diamonds and redstone: y -59 to -55. Iron: y 15 and \
+				also around y 232. Copper: y 48. Gold: y -16. Coal: y 96, and anywhere shallow. \
+				Emerald: only in mountains, y 236. Lapis: y 0. Everything below y 0 needs a \
+				tunnel dug to it, which the bot will do by itself but which takes time.
+				- ORES EXIST UNDER SEVERAL NAMES. The same ore is a different block in deepslate \
+				and in the Nether: diamond_ore and deepslate_diamond_ore are two blocks, and \
+				below y 0 there is no diamond_ore at all. find and locate handle this for you — \
+				asking for diamond_ore searches for the deepslate kind too — so use the plain \
+				name and do not try to guess which one is down there. mine and place take one \
+				exact block at one exact spot, so there the name has to be the real one.
+				- The bot needs the right pickaxe for the ore or the block breaks into nothing: \
+				stone for iron and copper, iron for gold, redstone and diamond, diamond for \
+				obsidian and ancient_debris. Check inventory before a trip rather than after.
+				- TOOLS AND ARMOUR WEAR OUT AND VANISH. When a result carries a "nearly worn out" \
+				warning, act on it before starting anything long — craft a replacement, or say \
+				so and stop. A pickaxe that breaks halfway down a shaft leaves the bot digging \
+				with its hands, which is slow enough to look like a hang.
 				- Set a chest with chest before a long gathering job, so the bot can empty its \
 				inventory and keep going instead of stopping when full.
 				- status tells you where the bot is, its health and hunger, and how full it is; \

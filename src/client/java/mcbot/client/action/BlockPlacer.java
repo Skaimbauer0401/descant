@@ -50,8 +50,22 @@ public final class BlockPlacer {
 
 	private int ticks;
 
+	/** Why the last attempt failed, in words a caller can pass on. Empty when there is nothing to add. */
+	private String problem = "";
+
 	public void begin(BlockPos target) {
 		begin(target, null);
+	}
+
+	/**
+	 * Why the last placement failed, or empty.
+	 *
+	 * <p>Survives {@link #cancel()} on purpose: every failure path cancels before the caller gets a
+	 * chance to look, so clearing it there would leave nothing to report. It is cleared when the next
+	 * placement starts instead.</p>
+	 */
+	public String problem() {
+		return problem;
 	}
 
 	/**
@@ -63,6 +77,7 @@ public final class BlockPlacer {
 		this.excludedBlock = excludedBlock;
 		this.required = null;
 		this.ticks = 0;
+		this.problem = "";
 	}
 
 	/**
@@ -75,6 +90,7 @@ public final class BlockPlacer {
 		this.excludedBlock = null;
 		this.required = item;
 		this.ticks = 0;
+		this.problem = "";
 	}
 
 	public BlockPos target() {
@@ -102,6 +118,7 @@ public final class BlockPlacer {
 			return ActionState.DONE; // something already fills the space
 		}
 		if (++ticks > TIMEOUT_TICKS) {
+			problem = "something kept getting in the way";
 			cancel();
 			return ActionState.FAILED;
 		}
@@ -116,8 +133,11 @@ public final class BlockPlacer {
 
 		Direction toAnchor = findAnchorDirection(minecraft.level, target);
 		if (toAnchor == null) {
+			// A block is placed against the face of an existing one, so a spot floating in mid-air with
+			// nothing beside it cannot be built on at all.
+			problem = "nothing solid next to that spot to place against";
 			cancel();
-			return ActionState.FAILED; // nothing solid to build off
+			return ActionState.FAILED;
 		}
 
 		BlockPos anchor = target.relative(toAnchor);
@@ -149,6 +169,17 @@ public final class BlockPlacer {
 		boolean aimed = Steering.angleDifference(player.getXRot(), desiredPitch) <= AIM_TOLERANCE;
 
 		if (pillaring) {
+			// The bot is standing in the space it is filling, so the only way out is upwards. That is
+			// fine under an open sky and impossible in a cave or a two-high room, where the head hits
+			// the ceiling before the feet clear the block. Checked here rather than discovered by
+			// jumping into a ceiling for sixty ticks and reporting a timeout, which explains nothing.
+			if (!canRiseClear(minecraft.level, target)) {
+				problem = "the bot is standing in that spot and there is no headroom to get out of the "
+						+ "way — a block cannot be placed into a space something is occupying";
+				cancel();
+				return ActionState.FAILED;
+			}
+
 			// Yaw is meaningless when looking straight down — the target is directly below, so
 			// every heading is equally correct. Forcing one would waste the airborne window.
 			input.sneak(false);
@@ -208,6 +239,21 @@ public final class BlockPlacer {
 
 		// Success is confirmed by the block appearing, checked at the top of the next tick.
 		return ActionState.WORKING;
+	}
+
+	/**
+	 * Whether the player could rise clear of the block it is standing in.
+	 *
+	 * <p>Needs the two blocks above it: one to stand in and one for the head, which is the same
+	 * clearance walking anywhere needs. In the open that is air and always true; in a cave or a
+	 * two-high room it is the ceiling, and no amount of jumping will help.</p>
+	 */
+	private static boolean canRiseClear(Level level, BlockPos target) {
+		return isPassable(level, target.above()) && isPassable(level, target.above(2));
+	}
+
+	private static boolean isPassable(Level level, BlockPos pos) {
+		return level.getBlockState(pos).getCollisionShape(level, pos).isEmpty();
 	}
 
 	/** Whether the player is close enough to the middle of their own column to jump cleanly. */

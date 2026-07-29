@@ -142,6 +142,15 @@ public final class BotController {
 	/** When mining a block type, what we are hunting; {@code null} for an ordinary journey. */
 	private Block huntedBlock;
 
+	/**
+	 * Every block that counts as the thing being hunted.
+	 *
+	 * <p>More than one because ores come in stone-type variants: below y=0 there is no ordinary
+	 * diamond ore at all. {@link #huntedBlock} stays the particular one currently being dug, since
+	 * that is what the quota counts and what the scaffolding must not spend.</p>
+	 */
+	private Set<Block> huntedFamily = Set.of();
+
 	/** When hunting a mob: the type to look for next, and the individual currently pursued. */
 	private EntityType<?> huntedType;
 	private Entity huntedEntity;
@@ -362,16 +371,17 @@ public final class BotController {
 	 *
 	 * @return whether a block was found to head for
 	 */
-	public boolean huntFor(Minecraft minecraft, LocalPlayer player, Block block, String displayName,
-			boolean execute) {
+	public boolean huntFor(Minecraft minecraft, LocalPlayer player, Set<Block> family,
+			String displayName, boolean execute) {
 		BlockPos found = BlockSearcher.findNearest(
 				minecraft.level,
 				BlockPos.containing(player.position()),
 				BotSettings.BLOCK_SEARCH_RADIUS.get(),
-				state -> state.is(block));
+				state -> family.contains(state.getBlock()));
 
 		if (found == null) {
 			huntedBlock = null;
+			huntedFamily = Set.of();
 			message("No " + displayName + " within " + BotSettings.BLOCK_SEARCH_RADIUS.get()
 					+ " blocks of here.");
 			return false;
@@ -388,9 +398,15 @@ public final class BotController {
 		BlockPos destination = approachPosition(minecraft, player, found);
 		navigateTo(destination, TravelMode.BUILD);
 
+		// The block actually standing there, not the one that was asked for. Those differ whenever a
+		// family matched a variant — and everything downstream (what counts towards the quota, what
+		// the scaffolding must not spend) is about the block being mined, not the word used for it.
+		Block actual = minecraft.level.getBlockState(found).getBlock();
+
 		this.mineTarget = execute ? found : null;
-		this.mineTargetBlock = execute ? block : null;
-		this.huntedBlock = execute ? block : null;
+		this.mineTargetBlock = execute ? actual : null;
+		this.huntedBlock = execute ? actual : null;
+		this.huntedFamily = execute ? family : Set.of();
 		this.huntedType = null;
 		this.huntedEntity = null;
 		this.huntedName = displayName;
@@ -411,8 +427,10 @@ public final class BotController {
 		this.buildTarget = target.immutable();
 		this.buildItem = item;
 
-		// Already within arm's reach: no point planning a journey to where we are standing.
-		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()) {
+		// Already within arm's reach: no point planning a journey to where we are standing. Unless we
+		// are standing in the very spot — see below.
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()
+				&& !occupies(player, target)) {
 			resetPlan(minecraft);
 			placer.beginWith(buildTarget, item);
 			status = Status.PLACING;
@@ -421,8 +439,18 @@ public final class BotController {
 
 		// Otherwise treat it exactly like a block to be mined: stand somewhere within reach and act
 		// from there, letting the ordinary pathfinder work out how to get to that spot.
-		navigateTo(approachPosition(minecraft, player, target), mode);
+		//
+		// Unlike mining, though, the spot may not be one the bot's own body fills. Minecraft refuses to
+		// place a block into a space an entity occupies, so the only way out from there is to jump and
+		// place underneath — which works outdoors and fails flatly in a cave or a two-high room, where
+		// there is no headroom to jump into. Standing beside it instead makes the ceiling irrelevant.
+		navigateTo(approachPosition(minecraft, player, target, target), mode);
 		return true;
+	}
+
+	/** Whether the player's body is in the way of a block being placed at {@code pos}. */
+	private static boolean occupies(LocalPlayer player, BlockPos pos) {
+		return player.getBoundingBox().intersects(new AABB(pos));
 	}
 
 	/**
@@ -522,6 +550,7 @@ public final class BotController {
 
 		// Not a hunt: nothing should go looking for another one of these afterwards.
 		huntedBlock = null;
+		huntedFamily = Set.of();
 		huntedType = null;
 		huntedEntity = null;
 		huntExecute = false;
@@ -613,6 +642,16 @@ public final class BotController {
 	 * way. Both outcomes end with the block mined.</p>
 	 */
 	private BlockPos approachPosition(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		return approachPosition(minecraft, player, target, null);
+	}
+
+	/**
+	 * @param keepClear a block the bot's body must not occupy from the chosen spot, or {@code null}.
+	 *                  Placing needs this and mining does not: you cannot put a block into your own
+	 *                  legs, but you can certainly break one you are standing in
+	 */
+	private BlockPos approachPosition(Minecraft minecraft, LocalPlayer player, BlockPos target,
+			BlockPos keepClear) {
 		WorldView world = new WorldView(minecraft.level);
 		BlockPos from = BlockPos.containing(player.position());
 		int radius = (int) Math.ceil(BotSettings.REACH.get());
@@ -634,6 +673,13 @@ public final class BotController {
 					// hole, which is the whole "digs straight down" failure. Beside or above-beside
 					// is fine; directly on top is not.
 					if (candidate.below().equals(target)) {
+						continue;
+					}
+					// Standing feet-in or head-in the spot to be filled. The nearest standing spot to
+					// any airy target is the target itself, so without this the bot picks it almost
+					// every time and then has to jump out of its own way to place.
+					if (keepClear != null
+							&& (candidate.equals(keepClear) || candidate.above().equals(keepClear))) {
 						continue;
 					}
 					if (!withinReach(candidate, target)) {
@@ -714,6 +760,7 @@ public final class BotController {
 		// takes over from there.
 		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), TravelMode.BUILD);
 		huntedBlock = null;
+		huntedFamily = Set.of();
 		huntedType = type;
 		// Hold on to the individual only when hunting it down; otherwise this is a one-off trip to
 		// where it happened to be standing.
@@ -772,8 +819,8 @@ public final class BotController {
 		// there is a whole loot sweep, and the route to the drops may well cut through another of the
 		// same block — which is how "six oak logs" reported seven: the sweep mined one more and the
 		// tally was still listening. The extra block is ordinary path clearing, not part of the order.
-		boolean wanted = huntExecute && huntedBlock != null && breakingBlock == huntedBlock
-				&& !huntReached;
+		boolean wanted = huntExecute && !huntedFamily.isEmpty()
+				&& huntedFamily.contains(breakingBlock) && !huntReached;
 		breakingBlock = null;
 		return wanted && tallyOne();
 	}
@@ -885,6 +932,7 @@ public final class BotController {
 		resetPlan(minecraft);
 		goal = null;
 		huntedBlock = null;
+		huntedFamily = Set.of();
 		huntedType = null;
 		huntedEntity = null;
 		huntQuota = 0;
@@ -2048,7 +2096,7 @@ public final class BotController {
 	 * are left.
 	 */
 	private void continueHunt(Minecraft minecraft) {
-		Block block = huntedBlock;
+		Set<Block> family = huntedFamily;
 		EntityType<?> type = huntedType;
 		String name = huntedName;
 		boolean execute = huntExecute;
@@ -2062,6 +2110,7 @@ public final class BotController {
 			huntQuota = 0;
 			resetPlan(minecraft);
 			huntedBlock = null;
+			huntedFamily = Set.of();
 			huntedType = null;
 			huntedEntity = null;
 			mineTarget = null;
@@ -2072,8 +2121,8 @@ public final class BotController {
 		resetPlan(minecraft);
 
 		LocalPlayer player = minecraft.player;
-		boolean more = player != null && execute && (block != null
-				? huntFor(minecraft, player, block, name, true)
+		boolean more = player != null && execute && (!family.isEmpty()
+				? huntFor(minecraft, player, family, name, true)
 				: type != null && huntForEntity(minecraft, player, type, name, true));
 
 		if (!more) {
@@ -2084,6 +2133,7 @@ public final class BotController {
 				digTarget = null;
 			}
 			huntedBlock = null;
+			huntedFamily = Set.of();
 			huntedType = null;
 			huntedEntity = null;
 			mineTarget = null;
@@ -2144,9 +2194,19 @@ public final class BotController {
 				}
 			}
 			case FAILED -> {
-				// A bad anchor or a timeout, not an inventory problem. Replanning routes around it
-				// and keeps building available for the rest of the journey.
+				String why = placer.problem();
 				placer.cancel();
+				if (requested) {
+					// Someone asked for a block at a named spot and it did not go there. Replanning would
+					// walk back and try the same impossible placement again — the bot's own body, or a
+					// spot with nothing to build against, is not something another route fixes.
+					finishBuild(minecraft, false, "Couldn't place " + buildItem
+							.getName(buildItem.getDefaultInstance()).getString() + " at " + format(buildTarget)
+							+ (why.isEmpty() ? "." : " — " + why + "."));
+					return;
+				}
+				// Scaffolding: a bad anchor or a timeout, not an inventory problem. Replanning routes
+				// around it and keeps building available for the rest of the journey.
 				replan(minecraft);
 			}
 		}

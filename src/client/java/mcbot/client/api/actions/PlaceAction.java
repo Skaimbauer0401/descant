@@ -60,8 +60,13 @@ public final class PlaceAction implements Action {
 		return List.of(
 				Parameter.required("block", ParameterType.STRING,
 						"The block id to place, such as 'furnace', 'crafting_table' or 'torch'."),
+				// y is where the block goes, not where the bot stands. Models reliably assume otherwise
+				// and place a chest in the floor, so it is said here as well as in the descriptions.
 				Parameter.optional("x", ParameterType.INTEGER, "East-west coordinate of the spot."),
-				Parameter.optional("y", ParameterType.INTEGER, "Height of the spot."),
+				Parameter.optional("y", ParameterType.INTEGER,
+						"Height of the EMPTY space the block will fill — not the height of the floor it "
+								+ "rests on, and not the height the bot stands at. To put a chest on the "
+								+ "floor of a room whose floor is y=64, that is y=65."),
 				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the spot."),
 				Travel.PARAMETER,
 				Scaffold.PARAMETER);

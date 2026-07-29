@@ -1,6 +1,7 @@
 package mcbot.client.api.actions;
 
 import java.util.List;
+import java.util.Set;
 
 import mcbot.client.BotSettings;
 import mcbot.client.api.Action;
@@ -66,22 +67,26 @@ public final class LocateAction implements Action {
 			return ActionResult.failed("'count' must be at least 1.");
 		}
 
+		// Ores come in stone-type variants and the caller almost never means only one of them.
+		Set<Block> family = BlockFamily.of(block);
+		String named = BlockFamily.describe(family);
+
 		BlockPos from = BlockPos.containing(context.player().position());
 		int radius = BotSettings.BLOCK_SEARCH_RADIUS.get();
 		List<BlockPos> found = BlockSearcher.findNearest(
 				context.minecraft().level, from, radius, count, BotSettings.LOCATE_SPACING.get(),
-				state -> state.is(block));
+				state -> family.contains(state.getBlock()));
 
 		if (found.isEmpty()) {
 			// Worth saying why rather than just "no": the search only sees loaded chunks, so "none
 			// here" and "none in the world" are different answers and only one of them means give up.
-			return ActionResult.failed("No " + wanted + " within " + radius + " blocks of "
+			return ActionResult.failed("No " + named + " within " + radius + " blocks of "
 					+ describe(from) + ". Only loaded terrain can be searched, so travelling somewhere "
 					+ "else and asking again may well find one.");
 		}
 
 		StringBuilder text = new StringBuilder();
-		text.append(found.size()).append("x ").append(wanted);
+		text.append(found.size()).append("x ").append(named);
 		// A short list means the search ran out of matches, not that it stopped counting — and those
 		// are different facts. "All there is" tells the caller not to bother asking for more.
 		if (found.size() < count) {
