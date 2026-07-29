@@ -3,6 +3,7 @@ package mcbot.client.api.actions;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import mcbot.client.ai.AiProvider;
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionContext;
 import mcbot.client.api.ActionResult;
@@ -74,7 +75,8 @@ public final class SetAction implements Action {
 				// Said plainly rather than left to be discovered: the whole point of a setting is that it
 				// stays set, and finding out otherwise after a restart is how an hour gets wasted.
 				+ (saved ? "" : " (Couldn't write " + SettingRegistry.file()
-						+ ", so this lasts until the game closes.)"));
+						+ ", so this lasts until the game closes.)")
+				+ AiProvider.inertNote(setting));
 	}
 
 	private static String listing() {

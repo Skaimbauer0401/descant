@@ -1,6 +1,9 @@
 package mcbot.client.ai;
 
+import mcbot.client.BotSettings;
+import mcbot.client.settings.Setting;
 import mcbot.client.settings.SettingChoice;
+import mcbot.client.settings.StringSetting;
 
 /**
  * Where the model that drives the bot comes from.
@@ -53,6 +56,45 @@ public enum AiProvider implements SettingChoice {
 	@Override
 	public String describe() {
 		return description;
+	}
+
+	/**
+	 * The setting this provider reads its model name from.
+	 *
+	 * <p>A method rather than a field on the enum: {@link mcbot.client.BotSettings} constructs the
+	 * {@code aiProvider} setting from these constants, so a field initialised from BotSettings would be
+	 * read during that class's own initialisation and find it half-built.</p>
+	 */
+	public StringSetting modelSetting() {
+		return switch (this) {
+			case LOCAL -> BotSettings.AI_MODEL;
+			case CLOUD -> BotSettings.AI_CLOUD_MODEL;
+			case CLAUDE -> BotSettings.AI_CLAUDE_MODEL;
+			case GEMINI -> BotSettings.AI_GEMINI_MODEL;
+		};
+	}
+
+	/**
+	 * A warning, when the setting just changed is a model name the active provider does not read.
+	 *
+	 * <p>There are four model settings and they differ by one word in the middle, which is one word too
+	 * few. Setting {@code aiModel} while running Gemini changes something real, succeeds, reports
+	 * success, and has no effect on anything — and the only evidence is a quota message naming a model
+	 * nobody chose. Cheap to detect and expensive to work out, so it is said at the point of the
+	 * mistake.</p>
+	 *
+	 * @return the clause to append, or empty when the change was the relevant one
+	 */
+	public static String inertNote(Setting changed) {
+		AiProvider active = BotSettings.AI_PROVIDER.get();
+		for (AiProvider provider : values()) {
+			if (provider.modelSetting() == changed && provider != active) {
+				return " Note: aiProvider is '" + active.key() + "', which reads "
+						+ active.modelSetting().name() + " — so this has no effect on anything until "
+						+ "'/mcbot set aiProvider " + provider.key() + "'.";
+			}
+		}
+		return "";
 	}
 
 	/** Opens a client for this provider. */
