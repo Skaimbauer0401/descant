@@ -41,7 +41,7 @@ public final class GeminiProvider implements LlmProvider {
 	private static final String ENDPOINT =
 			"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
 
-	/** Environment variable holding the key — the name Google's own tools use. */
+	/** The name the key goes by, in the environment or the keys file — the one Google's tools use. */
 	private static final String KEY_VARIABLE = "GEMINI_API_KEY";
 
 	/** Accepted too, because the official SDKs read it as an alternative and people have it set. */
@@ -66,26 +66,11 @@ public final class GeminiProvider implements LlmProvider {
 		return "gemini " + BotSettings.AI_GEMINI_MODEL.get();
 	}
 
-	/**
-	 * The API key, from the environment.
-	 *
-	 * <p>Deliberately not a setting, for the same reason as {@link ClaudeProvider}: settings are listed
-	 * by {@code /mcbot set}, echoed into chat and written into the action schema the model itself
-	 * reads — three ways for a credential to end up somewhere it cannot be taken back from.</p>
-	 */
+	/** The API key. See {@link ApiKeys} for where it is looked for and why never in a setting. */
 	private static String apiKey() throws IOException {
-		String key = System.getenv(KEY_VARIABLE);
-		if (key == null || key.isBlank()) {
-			key = System.getenv(FALLBACK_KEY_VARIABLE);
-		}
-		if (key == null || key.isBlank()) {
-			throw new IOException("No " + KEY_VARIABLE + " in the environment, so Gemini cannot be "
-					+ "reached. Get a key from aistudio.google.com/apikey — it has a free tier that "
-					+ "covers this — set it as " + KEY_VARIABLE + ", and restart the game, since the "
-					+ "launcher only reads the environment at startup. "
-					+ "'/mcbot set aiProvider local' works offline meanwhile.");
-		}
-		return key.trim();
+		return ApiKeys.require("Gemini",
+				"Get one from aistudio.google.com/apikey — it has a free tier that covers this.",
+				KEY_VARIABLE, FALLBACK_KEY_VARIABLE);
 	}
 
 	@Override
@@ -373,8 +358,8 @@ public final class GeminiProvider implements LlmProvider {
 
 		if (lower.contains("api key not valid") || lower.contains("api_key_invalid")
 				|| status == 401) {
-			return "Google rejected the API key. Check " + KEY_VARIABLE + " holds a current key from "
-					+ "aistudio.google.com/apikey.";
+			return "Google rejected the API key. Check the " + KEY_VARIABLE + " in " + ApiKeys.file()
+					+ " (or in the environment) holds a current key from aistudio.google.com/apikey.";
 		}
 		if (lower.contains("api has not been used") || lower.contains("service_disabled")) {
 			return "The Generative Language API is not enabled for that key's project. A key made at "

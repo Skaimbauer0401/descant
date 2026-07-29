@@ -42,7 +42,7 @@ public final class ClaudeProvider implements LlmProvider {
 	/** The API version this code is written against. Anthropic requires it on every request. */
 	private static final String API_VERSION = "2023-06-01";
 
-	/** Environment variable holding the key. */
+	/** The name the key goes by, in the environment or the keys file. */
 	private static final String KEY_VARIABLE = "ANTHROPIC_API_KEY";
 
 	/**
@@ -63,23 +63,12 @@ public final class ClaudeProvider implements LlmProvider {
 		return "claude " + BotSettings.AI_CLAUDE_MODEL.get();
 	}
 
-	/**
-	 * The API key, from the environment.
-	 *
-	 * <p>Deliberately not a setting. Settings are listed by {@code /mcbot set}, echoed into chat and
-	 * written to the action schema the model itself reads — three ways for a credential to end up
-	 * somewhere it cannot be taken back from. The environment keeps it out of the game entirely.</p>
-	 */
+	/** The API key. See {@link ApiKeys} for where it is looked for and why never in a setting. */
 	private static String apiKey() throws IOException {
-		String key = System.getenv(KEY_VARIABLE);
-		if (key == null || key.isBlank()) {
-			throw new IOException("No " + KEY_VARIABLE + " in the environment, so Claude cannot be "
-					+ "reached. Create a key at console.anthropic.com, set it as " + KEY_VARIABLE
-					+ ", and restart the game — the launcher only reads the environment at startup. "
-					+ "Note this is the paid API and is billed per token; a Claude Pro subscription "
-					+ "does not cover it. Meanwhile '/mcbot set aiProvider local' works offline.");
-		}
-		return key.trim();
+		return ApiKeys.require("Claude",
+				"Create one at console.anthropic.com — note this is the paid API, billed per token, "
+						+ "and a Claude Pro subscription does not cover it.",
+				KEY_VARIABLE);
 	}
 
 	@Override
@@ -297,9 +286,10 @@ public final class ClaudeProvider implements LlmProvider {
 		String model = BotSettings.AI_CLAUDE_MODEL.get();
 
 		if (status == 401 || lower.contains("authentication_error")) {
-			return "Anthropic rejected the API key. Check " + KEY_VARIABLE + " holds a current key "
-					+ "from console.anthropic.com — a Claude Pro login is a different thing and will "
-					+ "not work here.";
+			return "Anthropic rejected the API key. Check the " + KEY_VARIABLE + " in "
+					+ ApiKeys.file() + " (or in the environment) holds a current key from "
+					+ "console.anthropic.com — a Claude Pro login is a different thing and will not "
+					+ "work here.";
 		}
 		if (status == 403 || lower.contains("permission_error")) {
 			return "That key is not allowed to use " + model + ". Check the model name and what the "
