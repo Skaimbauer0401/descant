@@ -12,6 +12,7 @@ import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -51,6 +52,33 @@ public final class WorldView {
 			Blocks.WITHER_ROSE,
 			Blocks.POWDER_SNOW,
 			Blocks.COBWEB);
+
+	/**
+	 * Workstations and furniture the bot refuses to mine its way through.
+	 *
+	 * <p>Only the ones that have no block entity to give them away. Everything else that someone put
+	 * somewhere on purpose — chests, furnaces, beds, signs, hives, spawners — carries one, and
+	 * {@link EntityBlock} catches the lot without a list to keep up to date.</p>
+	 *
+	 * <p>The point is that a route is not worth a base. The pathfinder digs through whatever stands
+	 * between it and the goal, and "go back to base" ends at exactly the place where the things in the
+	 * way are the crafting table and the chests — so the bot arrives having demolished what it was
+	 * sent to. Routing around costs a few seconds; the alternative costs whatever was in the chest.</p>
+	 */
+	private static final Set<Block> PROTECTED = Set.of(
+			Blocks.CRAFTING_TABLE,
+			Blocks.SMITHING_TABLE,
+			Blocks.CARTOGRAPHY_TABLE,
+			Blocks.FLETCHING_TABLE,
+			Blocks.LOOM,
+			Blocks.STONECUTTER,
+			Blocks.GRINDSTONE,
+			Blocks.ANVIL,
+			Blocks.CHIPPED_ANVIL,
+			Blocks.DAMAGED_ANVIL,
+			Blocks.COMPOSTER,
+			Blocks.LODESTONE,
+			Blocks.BOOKSHELF);
 
 	private final ClientLevel level;
 
@@ -263,7 +291,12 @@ public final class WorldView {
 	 *
 	 * <p>Rejects unbreakable blocks, liquids (mining them does nothing) and blocks whose removal
 	 * would be actively dangerous — anything holding back lava, or a falling block that would drop
-	 * onto the bot's head.</p>
+	 * onto the bot's head. Also anything that was clearly put there on purpose: see
+	 * {@link #isProtected}.</p>
+	 *
+	 * <p>Only about clearing the way. An explicit {@code mine} or a hunt aimed at one of these still
+	 * breaks it, and should — a refusal to do the thing it was asked for outright would be a different
+	 * and worse behaviour than declining to do it by accident.</p>
 	 */
 	public boolean isBreakable(BlockPos pos) {
 		BlockState state = state(pos);
@@ -273,10 +306,29 @@ public final class WorldView {
 		if (state.getDestroySpeed(level, pos) < 0) {
 			return false; // bedrock, barriers, portal frames
 		}
+		if (isProtected(state)) {
+			return false;
+		}
 		if (state.getBlock() instanceof FallingBlock || state(pos.above()).getBlock() instanceof FallingBlock) {
 			return false; // sand/gravel would collapse into the space we just cleared
 		}
 		return !touchesLava(pos);
+	}
+
+	/**
+	 * Whether this is something somebody built, rather than terrain.
+	 *
+	 * <p>A block entity is the giveaway: chests, furnaces, beds, signs, banners, hives, spawners and
+	 * every other block that has to remember something all carry one, and nothing that occurs as plain
+	 * ground does. That covers the whole category without a list, and keeps covering it as versions add
+	 * to it. {@link #PROTECTED} then names the handful of workstations — the crafting table above all —
+	 * that store nothing and so have no block entity to be recognised by.</p>
+	 */
+	public static boolean isProtected(BlockState state) {
+		if (!BotSettings.PROTECT_BUILT.get()) {
+			return false;
+		}
+		return state.getBlock() instanceof EntityBlock || PROTECTED.contains(state.getBlock());
 	}
 
 	/** True when any face of this block is exposed to lava — mining it would flood the tunnel. */

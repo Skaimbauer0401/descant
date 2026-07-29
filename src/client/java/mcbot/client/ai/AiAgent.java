@@ -362,6 +362,15 @@ public final class AiAgent {
 				walking route.
 				- find is the exception: it has no travel argument and always digs, because \
 				what it is going to is usually buried.
+				- THE BOT WILL NOT MINE THROUGH ANYTHING BUILT. Chests, furnaces, crafting \
+				tables, beds, signs, barrels, hoppers, anvils and the rest are routed around \
+				rather than dug through, so a trip back to base no longer arrives having \
+				demolished the base. Walls, floors and ceilings are NOT protected — those are \
+				plain blocks and the bot goes straight through them — so near anything built \
+				that matters, still pass travel='walk'.
+				- That protection is only about clearing the way. If you actually call mine on a \
+				furnace, or find with execute=true for one, it breaks it as asked. So never \
+				aim either at a workstation the player is using unless they said to.
 				- GOING SOMEWHERE COSTS BLOCKS whenever digging is allowed. The bot bridges \
 				across gaps and water and pillars up cliffs, spending blocks straight out \
 				of its inventory, and left to itself it spends the first solid block it \

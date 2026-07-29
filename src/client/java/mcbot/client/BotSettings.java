@@ -378,6 +378,20 @@ public final class BotSettings {
 					+ "minutes are never included.");
 
 	/**
+	 * Whether the bot mines its way through things people built.
+	 *
+	 * <p>On, because the failure it prevents is not recoverable. A route through a base ends with the
+	 * chest gone and its contents on the floor, or already despawned; a route around it costs a few
+	 * seconds. Those are not the same size of mistake, so the default is not a close call.</p>
+	 *
+	 * <p>Only about clearing the way. Asked outright to mine a furnace, the bot still mines it.</p>
+	 */
+	public static final BooleanSetting PROTECT_BUILT = new BooleanSetting("protectBuilt", true,
+			"Whether to route around chests, furnaces, crafting tables, beds, signs and anything else "
+					+ "that was built rather than grown, instead of mining through them. Does not stop an "
+					+ "explicit 'mine' or a 'find' aimed at one.");
+
+	/**
 	 * When a held or worn item counts as nearly worn out.
 	 *
 	 * <p>Ten percent, which on an iron pickaxe is about 25 swings — enough warning to walk back and
