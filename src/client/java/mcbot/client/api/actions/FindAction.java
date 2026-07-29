@@ -10,6 +10,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
+import mcbot.client.control.TravelMode;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.EntityType;
@@ -43,9 +44,11 @@ public final class FindAction implements Action {
 				+ "that was built — chests, furnaces, crafting tables, beds and signs are routed "
 				+ "around — but it will gladly bore a hole through a wall or a floor, break into a "
 				+ "cave full of mobs, or spend a long time underground. "
-				+ "There is no movement-only version — find always breaks and places, "
-				+ "bridging gaps and pillaring up on blocks out of its own inventory, so say which "
-				+ "block to spend with 'scaffold'. "
+				+ "By default it breaks and places on the way, bridging gaps and pillaring up on blocks "
+				+ "out of its own inventory, so say which block to spend with 'scaffold' — or pass "
+				+ "travel='walk' to make the journey between targets movement-only. Note that mining the "
+				+ "target itself always happens with execute=true, whatever travel says: travel is about "
+				+ "getting there, not about the job. "
 				+ "If any of that would matter, check the surroundings with look or locate first.";
 	}
 
@@ -63,6 +66,7 @@ public final class FindAction implements Action {
 								+ "broken and mobs killed, not items collected, so allow for a block "
 								+ "sometimes dropping more than one. Leave it out to clear every one in "
 								+ "range, which on a common ore can take a very long time."),
+				Travel.PARAMETER,
 				Scaffold.PARAMETER);
 	}
 
@@ -80,6 +84,9 @@ public final class FindAction implements Action {
 		if (rejected != null) {
 			return rejected;
 		}
+		// Building by default: gathering is the one job where digging is the point rather than a
+		// side effect, so find keeps its old behaviour unless it is told otherwise.
+		TravelMode mode = Travel.mode(arguments, TravelMode.BUILD);
 
 		Identifier id = Identifier.tryParse(raw.contains(":") ? raw : "minecraft:" + raw);
 		if (id == null) {
@@ -97,36 +104,36 @@ public final class FindAction implements Action {
 			Set<Block> family = BlockFamily.of(block.get());
 			boolean found = context.controller().huntFor(
 					context.minecraft(), context.player(), family,
-					BlockFamily.describe(family), execute);
+					BlockFamily.describe(family), execute, mode);
 			if (!found) {
 				return ActionResult.failedQuiet("No " + raw + " in range. Travel somewhere else and try again.");
 			}
 			context.controller().setHuntQuota(count);
-			return ActionResult.okQuiet(describe(execute, count, raw));
+			return ActionResult.okQuiet(describe(execute, count, raw, mode));
 		}
 
 		Optional<EntityType<?>> type = BuiltInRegistries.ENTITY_TYPE.getOptional(id);
 		if (type.isPresent()) {
 			boolean found = context.controller().huntForEntity(
 					context.minecraft(), context.player(), type.get(),
-					type.get().getDescription().getString(), execute);
+					type.get().getDescription().getString(), execute, mode);
 			if (!found) {
 				return ActionResult.failedQuiet("No " + raw + " nearby. Mobs are only visible within a few "
 						+ "hundred blocks, so travel somewhere else and try again.");
 			}
 			context.controller().setHuntQuota(count);
-			return ActionResult.okQuiet(describe(execute, count, raw));
+			return ActionResult.okQuiet(describe(execute, count, raw, mode));
 		}
 
 		return ActionResult.failed("There is no block or mob called '" + raw + "'.");
 	}
 
-	private static String describe(boolean execute, int count, String target) {
+	private static String describe(boolean execute, int count, String target, TravelMode mode) {
 		if (!execute) {
-			return "Heading to the nearest " + target + "." + Scaffold.note();
+			return "Heading to the nearest " + target + "." + Travel.note(mode);
 		}
 		return (count > 0
 				? "Gathering " + count + " " + target + "."
-				: "Gathering every " + target + " in range.") + Scaffold.note();
+				: "Gathering every " + target + " in range.") + Travel.note(mode);
 	}
 }

@@ -32,7 +32,18 @@ final class Travel {
 
 	/** The mode the caller asked for, or the {@code travelMode} setting when they did not say. */
 	static TravelMode mode(Arguments arguments) {
-		return arguments.getChoice("travel", TravelMode.values(), BotSettings.TRAVEL_MODE.get());
+		return mode(arguments, BotSettings.TRAVEL_MODE.get());
+	}
+
+	/**
+	 * The mode the caller asked for, or {@code fallback} when they did not say.
+	 *
+	 * <p>For the one action whose own default is not the setting: gathering is the job where digging
+	 * is the point rather than a side effect, and having {@code find} quietly obey a {@code walk}
+	 * preference would leave it unable to reach any ore that is buried, which is all of them.</p>
+	 */
+	static TravelMode mode(Arguments arguments, TravelMode fallback) {
+		return arguments.getChoice("travel", TravelMode.values(), fallback);
 	}
 
 	/** A clause for the reply saying how the bot intends to get there. */

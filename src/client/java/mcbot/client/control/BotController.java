@@ -151,6 +151,15 @@ public final class BotController {
 	 */
 	private Set<Block> huntedFamily = Set.of();
 
+	/**
+	 * How the hunt is allowed to travel between one target and the next.
+	 *
+	 * <p>Held rather than passed, because {@link #continueHunt} starts each further leg by itself,
+	 * long after the caller that chose the mode has returned. Defaults to building: gathering is
+	 * the one job where digging is the point rather than a side effect.</p>
+	 */
+	private TravelMode huntTravel = TravelMode.BUILD;
+
 	/** When hunting a mob: the type to look for next, and the individual currently pursued. */
 	private EntityType<?> huntedType;
 	private Entity huntedEntity;
@@ -372,7 +381,8 @@ public final class BotController {
 	 * @return whether a block was found to head for
 	 */
 	public boolean huntFor(Minecraft minecraft, LocalPlayer player, Set<Block> family,
-			String displayName, boolean execute) {
+			String displayName, boolean execute, TravelMode mode) {
+		this.huntTravel = mode;
 		BlockPos found = BlockSearcher.findNearest(
 				minecraft.level,
 				BlockPos.containing(player.position()),
@@ -395,8 +405,7 @@ public final class BotController {
 		// onto it instead of mining it — a move the physics will not perform. Mushrooms have no
 		// collision at all and get walked straight through, never broken. Approaching and mining
 		// explicitly sidesteps every one of these shape assumptions.
-		BlockPos destination = approachPosition(minecraft, player, found);
-		navigateTo(destination, TravelMode.BUILD);
+		navigateTo(approachGoal(minecraft, player, found), huntTravel);
 
 		// The block actually standing there, not the one that was asked for. Those differ whenever a
 		// family matched a variant — and everything downstream (what counts towards the quota, what
@@ -444,7 +453,7 @@ public final class BotController {
 		// place a block into a space an entity occupies, so the only way out from there is to jump and
 		// place underneath — which works outdoors and fails flatly in a cave or a two-high room, where
 		// there is no headroom to jump into. Standing beside it instead makes the ceiling irrelevant.
-		navigateTo(approachPosition(minecraft, player, target, target), mode);
+		navigateTo(approachGoal(minecraft, player, target, target), mode);
 		return true;
 	}
 
@@ -473,7 +482,7 @@ public final class BotController {
 			status = Status.CRAFTING;
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, table), mode);
+		navigateTo(approachGoal(minecraft, player, table), mode);
 	}
 
 	/**
@@ -494,7 +503,7 @@ public final class BotController {
 			status = Status.SMELTING;
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, furnace), mode);
+		navigateTo(approachGoal(minecraft, player, furnace), mode);
 	}
 
 	private void tickSmelting(Minecraft minecraft, LocalPlayer player) {
@@ -542,7 +551,7 @@ public final class BotController {
 			return false;
 		}
 
-		navigateTo(approachPosition(minecraft, player, target), mode);
+		navigateTo(approachGoal(minecraft, player, target), mode);
 		mineTarget = target.immutable();
 		mineTargetBlock = state.getBlock();
 		digTarget = target.immutable();
@@ -569,7 +578,7 @@ public final class BotController {
 			input.clear();
 			return;
 		}
-		navigateTo(approachPosition(minecraft, player, target), mode);
+		navigateTo(approachGoal(minecraft, player, target), mode);
 	}
 
 	/**
@@ -635,14 +644,19 @@ public final class BotController {
 	}
 
 	/**
-	 * A spot to stand while working on {@code target}.
+	 * A place to stand while working on {@code target}.
 	 *
 	 * <p>Falls back to the target itself when nothing beside it is standable — a buried ore has no
 	 * free neighbour, and routing into it makes the pathfinder tunnel there, breaking it on the
 	 * way. Both outcomes end with the block mined.</p>
+	 *
+	 * <p>Unless the target is one the bot refuses to break. Then routing into it asks for a cell it
+	 * can never enter and the search rightly reports no route — which is how "go to the furnace"
+	 * became "no route to the furnace" the moment furniture became protected. For those the goal is
+	 * to get <em>near</em> it, which is all standing at a workstation ever meant.</p>
 	 */
-	private BlockPos approachPosition(Minecraft minecraft, LocalPlayer player, BlockPos target) {
-		return approachPosition(minecraft, player, target, null);
+	private Goal approachGoal(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		return approachGoal(minecraft, player, target, null);
 	}
 
 	/**
@@ -650,7 +664,7 @@ public final class BotController {
 	 *                  Placing needs this and mining does not: you cannot put a block into your own
 	 *                  legs, but you can certainly break one you are standing in
 	 */
-	private BlockPos approachPosition(Minecraft minecraft, LocalPlayer player, BlockPos target,
+	private Goal approachGoal(Minecraft minecraft, LocalPlayer player, BlockPos target,
 			BlockPos keepClear) {
 		WorldView world = new WorldView(minecraft.level);
 		BlockPos from = BlockPos.containing(player.position());
@@ -697,7 +711,12 @@ public final class BotController {
 				}
 			}
 		}
-		return best != null ? best : target;
+		if (best != null) {
+			return new GoalBlock(best);
+		}
+		return WorldView.isProtected(world.state(target))
+				? new GoalNear(target, radius)
+				: new GoalBlock(target);
 	}
 
 	/** View point of a player whose feet are at {@code feet}, for a stance not yet occupied. */
@@ -732,7 +751,8 @@ public final class BotController {
 	 * @return whether one was found to head for
 	 */
 	public boolean huntForEntity(Minecraft minecraft, LocalPlayer player, EntityType<?> type,
-			String displayName, boolean execute) {
+			String displayName, boolean execute, TravelMode mode) {
+		this.huntTravel = mode;
 		AABB box = player.getBoundingBox().inflate(BotSettings.ENTITY_SEARCH_RADIUS.get());
 		Entity nearest = null;
 		double nearestDistance = Double.MAX_VALUE;
@@ -758,7 +778,7 @@ public final class BotController {
 		// block buys a precision that is already wrong — and standing *in* an entity is not a place you
 		// can be anyway. Getting within arm's length is the actual requirement, and close-range pursuit
 		// takes over from there.
-		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), TravelMode.BUILD);
+		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), huntTravel);
 		huntedBlock = null;
 		huntedFamily = Set.of();
 		huntedType = type;
@@ -2122,8 +2142,8 @@ public final class BotController {
 
 		LocalPlayer player = minecraft.player;
 		boolean more = player != null && execute && (!family.isEmpty()
-				? huntFor(minecraft, player, family, name, true)
-				: type != null && huntForEntity(minecraft, player, type, name, true));
+				? huntFor(minecraft, player, family, name, true, huntTravel)
+				: type != null && huntForEntity(minecraft, player, type, name, true, huntTravel));
 
 		if (!more) {
 			// A one-off dig deserves saying so. A spent hunt ends quietly because it has already
