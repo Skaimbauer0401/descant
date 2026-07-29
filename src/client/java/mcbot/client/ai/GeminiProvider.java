@@ -375,8 +375,7 @@ public final class GeminiProvider implements LlmProvider {
 					+ "'/mcbot set aiGeminiModel gemini-3.6-flash' — and see ai.google.dev/gemini-api/docs/models.";
 		}
 		if (status == 429 || lower.contains("resource_exhausted")) {
-			return "Out of Gemini quota for " + model + " — the free tier's limits reset, per minute and "
-					+ "per day. Wait a little, or switch with '/mcbot set aiProvider local'.";
+			return quota(body, model);
 		}
 		if (status == 503 || lower.contains("unavailable") || lower.contains("overloaded")) {
 			return "Gemini is overloaded right now. Try again shortly.";
@@ -385,6 +384,67 @@ public final class GeminiProvider implements LlmProvider {
 			return "Google returned a server error (HTTP " + status + "). Not your end; try again.";
 		}
 		return "Google returned HTTP " + status + ": " + brief(body);
+	}
+
+	/**
+	 * Says <em>which</em> limit was hit, when Google says so.
+	 *
+	 * <p>Worth digging the detail out because "out of quota" covers three unrelated situations with
+	 * three different answers, and one of them is not a shortage at all: a quota of <b>zero</b> means
+	 * the tier gives that model nothing, so waiting will never help and only a different model will.
+	 * Told apart from the per-minute limit, which a single run can reach on its own — a dozen steps of
+	 * a couple of seconds each fits inside a minute easily — and from the daily one, which does not
+	 * come back until it does.</p>
+	 */
+	private static String quota(String body, String model) {
+		String quotaId = null;
+		String quotaValue = null;
+		String retry = null;
+		try {
+			JsonArray details = JsonParser.parseString(body).getAsJsonObject()
+					.getAsJsonObject("error").getAsJsonArray("details");
+			for (JsonElement element : details == null ? new JsonArray() : details) {
+				JsonObject detail = element.getAsJsonObject();
+				JsonArray violations = detail.getAsJsonArray("violations");
+				if (violations != null && !violations.isEmpty()) {
+					JsonObject violation = violations.get(0).getAsJsonObject();
+					quotaId = string(violation, "quotaId");
+					quotaValue = string(violation, "quotaValue");
+				}
+				if (detail.has("retryDelay")) {
+					retry = string(detail, "retryDelay");
+				}
+			}
+		} catch (RuntimeException e) {
+			// An unfamiliar error shape is not worth failing over; the generic sentence below still
+			// tells the truth, just less usefully.
+			quotaId = null;
+		}
+
+		String where = " Your actual limits per model are at aistudio.google.com/rate-limit.";
+
+		if ("0".equals(quotaValue)) {
+			return "Your Gemini tier allows no requests at all for " + model + " — a quota of zero, not "
+					+ "an exhausted one, so waiting will not help. Pick a model your tier covers, such as "
+					+ "'/mcbot set aiGeminiModel gemini-2.5-flash'." + where;
+		}
+		if (quotaId != null && quotaId.contains("PerMinute")) {
+			return "Hit Gemini's per-minute limit for " + model
+					+ (quotaValue == null ? "" : " (" + quotaValue + " a minute)")
+					+ (retry == null ? ". Wait a moment." : ", which clears in " + retry + ".")
+					+ " One AI run can be a dozen calls, so lowering aiMaxSteps helps if this keeps "
+					+ "happening." + where;
+		}
+		if (quotaId != null && quotaId.contains("PerDay")) {
+			return "Out of Gemini requests for today on " + model
+					+ (quotaValue == null ? "" : " (" + quotaValue + " a day)")
+					+ " — the daily allowance resets at midnight US Pacific. A lighter model such as "
+					+ "gemini-2.5-flash-lite usually has a larger one." + where;
+		}
+		return "Out of Gemini quota for " + model
+				+ (quotaId == null ? "" : " (" + quotaId + ")")
+				+ (retry == null ? "." : ", which clears in " + retry + ".")
+				+ " '/mcbot set aiProvider local' works meanwhile." + where;
 	}
 
 	private static String brief(String body) {
