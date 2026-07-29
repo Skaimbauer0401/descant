@@ -656,7 +656,61 @@ public final class PathFinder {
 			// Diagonal mining is skipped deliberately: it multiplies the number of blocks to clear
 			// for very little gain, and the resulting corners are awkward to walk.
 			tryBreakThrough(node, target, baseCost);
+			tryBreakUp(node, target, baseCost);
 		}
+	}
+
+	/**
+	 * Cutting a step upwards through solid ground — one stair of a staircase.
+	 *
+	 * <p>The move that was missing, and its absence made the surface unreachable from underground.
+	 * Buried in stone, every branch above this one is unavailable: there is nowhere to walk to, nothing
+	 * to step onto, and no gap to bridge. That left {@link #tryPillarUp} as the <em>only</em> way to
+	 * gain a block, and pillaring needs {@code allowPlace} and a stack of blocks to spend. Without
+	 * either — walking mode, or simply out of cobble — A* had no upward move at all, so a goal above
+	 * the bot could not be improved on by any expansion, {@code bestFallback} found nothing better than
+	 * the start, and the search reported no route. Which was true of the moves it knew, and obviously
+	 * false to anyone watching: you dig upwards by digging upwards.</p>
+	 *
+	 * <p>Three blocks come out — the headroom to jump from, and the feet and head of the new stance —
+	 * against the one a pillar breaks. It is dearer per block and it spends nothing, which is the
+	 * trade A* should be the one to weigh.</p>
+	 */
+	private void tryBreakUp(Node node, BlockPos target, double baseCost) {
+		BlockPos from = node.pos;
+		// The tread has to already be there. This cuts a stair out of ground; it does not build one,
+		// which is what pillaring is for.
+		if (!simStandable(target)) {
+			return;
+		}
+		// Measured to the top of the tread, not to the landing cell — the landing is still solid at
+		// this point and would price the step at two blocks and be rejected for it.
+		if (world.climbHeight(from, target) > BotSettings.MAX_JUMP_HEIGHT) {
+			return;
+		}
+
+		BlockPos landing = target.above();
+		List<BlockPos> toBreak = new ArrayList<>(3);
+		double cost = baseCost + BotSettings.JUMP_COST.get() + BotSettings.BREAK_OVERHEAD.get();
+
+		// Headroom first: it is what the jump needs, and breaking it before leaving the ground is also
+		// the order the mover will carry out.
+		for (BlockPos pos : List.of(from.above(2), landing, landing.above())) {
+			if (simPassable(pos)) {
+				continue;
+			}
+			int ticks = breakTicks(pos);
+			if (ticks < 0) {
+				return;
+			}
+			cost += ticks;
+			toBreak.add(pos);
+		}
+
+		if (toBreak.isEmpty() || toBreak.size() > BotSettings.MAX_BREAK_PER_MOVE.get()) {
+			return;
+		}
+		add(node, landing, cost, toBreak, null);
 	}
 
 	/**

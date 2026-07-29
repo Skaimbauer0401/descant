@@ -205,9 +205,17 @@ public final class BotSettings {
 	public static final IntSetting AIR_SEARCH_NODES = new IntSetting("airSearchNodes", 800,
 			"Node budget for the search that finds the nearest breathable space.");
 
-	/** Blocks the bot may mine through in a single move (e.g. head + feet of a wall). */
-	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 2, 0, 6,
-			"Blocks the bot may mine through in one movement. 0 stops it tunnelling at all.");
+	/**
+	 * Blocks the bot may mine through in a single move.
+	 *
+	 * <p>Three, because that is what a step upwards costs: the headroom to jump from, and the feet and
+	 * head of the new stance. Two is enough for a wall — head and feet of a level tunnel — and was the
+	 * old value, which had the effect of making a staircase impossible to plan and the surface
+	 * unreachable from underground without spending blocks to pillar.</p>
+	 */
+	public static final IntSetting MAX_BREAK_PER_MOVE = new IntSetting("maxBreakPerMove", 3, 0, 6,
+			"Blocks the bot may mine through in one movement. Three is what a step up through solid "
+					+ "ground costs; two allows level tunnelling only. 0 stops it tunnelling at all.");
 
 	// ---------------------------------------------------------------- locating
 
