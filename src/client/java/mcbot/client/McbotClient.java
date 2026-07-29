@@ -65,7 +65,15 @@ public class McbotClient implements ClientModInitializer {
 		});
 	}
 
+	/**
+	 * Everything the controller and the agent say, on its way to chat.
+	 *
+	 * <p>Recorded as well as shown, so the next AI run can be told what just happened. The chat
+	 * commands report through Brigadier's own feedback instead and record themselves — two callers,
+	 * one {@link Transcript}.</p>
+	 */
 	private static void sendChatMessage(Component message) {
+		Transcript.record(message.getString());
 		LocalPlayer player = Minecraft.getInstance().player;
 		if (player != null) {
 			player.sendSystemMessage(message);

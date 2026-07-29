@@ -364,6 +364,19 @@ public final class BotSettings {
 	public static final IntSetting AI_MAX_STEPS = new IntSetting("aiMaxSteps", 12, 1, 200,
 			"How many rounds of function calls one AI run may take before it is called off.");
 
+	/**
+	 * How much of the recent chat a new AI run is shown.
+	 *
+	 * <p>Every run starts a fresh conversation, so without this a model that ended by asking "shall I
+	 * smelt them too?" cannot remember asking, and "yes" means nothing. Counted in lines rather than
+	 * exchanges because one run prints several — a sentence, the calls it made, and what each of them
+	 * did — so six is roughly the last couple of things that happened.</p>
+	 */
+	public static final IntSetting AI_RECALL = new IntSetting("aiRecall", 6, 0, 20,
+			"How many recent lines of mcbot and AI chat a new AI run is shown, so a follow-up like "
+					+ "'yes, do that' has something to refer to. 0 turns it off. Lines older than ten "
+					+ "minutes are never included.");
+
 	/** How long to wait for the model to reply. Cloud round-trips on a big model are not quick. */
 	public static final IntSetting AI_REQUEST_TIMEOUT = new IntSetting(
 			"aiRequestTimeout", 180, 5, 900,

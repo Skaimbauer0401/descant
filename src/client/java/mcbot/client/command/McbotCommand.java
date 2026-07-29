@@ -26,6 +26,7 @@ import mcbot.client.api.Arguments;
 import mcbot.client.api.BotApi;
 import mcbot.client.control.TravelMode;
 import mcbot.client.inventory.ChestSource;
+import mcbot.client.Transcript;
 import mcbot.client.settings.Setting;
 import mcbot.client.settings.SettingRegistry;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
@@ -456,6 +457,9 @@ public final class McbotCommand {
 	}
 
 	private static void feedback(CommandContext<FabricClientCommandSource> context, String message) {
+		// Recorded as well as shown: a locate or inventory run by hand is exactly the context the next
+		// '/mcbot ai ...' is likely to be referring to.
+		Transcript.record("[mcbot] " + message);
 		context.getSource().sendFeedback(Component.literal("[mcbot] " + message));
 	}
 }
