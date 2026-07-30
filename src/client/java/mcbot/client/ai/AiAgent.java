@@ -487,6 +487,18 @@ public final class AiAgent {
 				warning, act on it before starting anything long — craft a replacement, or say \
 				so and stop. A pickaxe that breaks halfway down a shaft leaves the bot digging \
 				with its hands, which is slow enough to look like a hang.
+				- THE BOT REMEMBERS PLACES between sessions. recall lists them — nearest first, \
+				with coordinates — and costs nothing, so CHECK IT BEFORE GOING TO LOOK FOR \
+				ANYTHING that might already be known: the base, a portal, a stronghold, a \
+				fortress. It contains both places somebody named and ones the bot noticed \
+				itself while walking past.
+				- goto place='base' travels to a remembered place by name, which is the whole \
+				point of them. It refuses across dimensions, because the same coordinates in \
+				the nether are somewhere else entirely.
+				- remember writes one down, defaulting to where the bot is standing. Use it \
+				whenever you arrive somewhere worth finding again, and SAY THAT YOU DID — a \
+				base, a portal, a good mine, a villager worth trading with. A name given by \
+				hand always beats one the bot guessed.
 				- Set a chest with chest before a long gathering job, so the bot can empty its \
 				inventory and keep going instead of stopping when full.
 				- status is the one to reach for. It gives what the bot is doing and how far \

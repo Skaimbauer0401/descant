@@ -5,6 +5,7 @@ import mcbot.client.api.BotApi;
 import mcbot.client.command.McbotCommand;
 import mcbot.client.control.BotController;
 import mcbot.client.gui.McbotKeys;
+import mcbot.client.memory.Landmarks;
 import mcbot.client.render.PathRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -63,6 +64,9 @@ public class McbotClient implements ClientModInitializer {
 		ClientTickEvents.START_CLIENT_TICK.register(minecraft -> {
 			if (minecraft.player != null && minecraft.level != null) {
 				controller.tick(minecraft);
+				// Outside the controller on purpose: the bot should notice a stronghold it walks past
+				// whether or not it is currently under orders, and memory is not a movement concern.
+				Landmarks.tick(minecraft, minecraft.player);
 			}
 		});
 	}

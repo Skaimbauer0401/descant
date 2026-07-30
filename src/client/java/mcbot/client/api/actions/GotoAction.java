@@ -1,6 +1,7 @@
 package mcbot.client.api.actions;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionContext;
@@ -9,6 +10,8 @@ import mcbot.client.api.Arguments;
 import mcbot.client.api.Parameter;
 import mcbot.client.api.ParameterType;
 import mcbot.client.control.TravelMode;
+import mcbot.client.memory.Place;
+import mcbot.client.memory.Places;
 import mcbot.client.path.goal.Goal;
 import mcbot.client.path.goal.GoalBlock;
 import mcbot.client.path.goal.GoalXZ;
@@ -32,6 +35,8 @@ public final class GotoAction implements Action {
 	@Override
 	public String description() {
 		return "Travel to a location, pathfinding around, over and through whatever is in the way. "
+				+ "Pass 'place' with a remembered name instead of coordinates to go somewhere the bot "
+				+ "has written down — 'base', 'stronghold' — which is what 'recall' lists. "
 				+ "Leave out 'y' unless you specifically need a particular height — without it the bot "
 				+ "arrives at ground level, which is almost always what you want for a journey. "
 				+ "By default it WALKS there and only starts mining and bridging if there turns out to "
@@ -42,8 +47,13 @@ public final class GotoAction implements Action {
 	@Override
 	public List<Parameter> parameters() {
 		return List.of(
-				Parameter.required("x", ParameterType.INTEGER, "East-west coordinate of the destination."),
-				Parameter.required("z", ParameterType.INTEGER, "North-south coordinate of the destination."),
+				// Optional, because either these or 'place' is required and the schema cannot say
+				// "one of". The check is in run(), where it can explain itself.
+				Parameter.optional("x", ParameterType.INTEGER, "East-west coordinate of the destination."),
+				Parameter.optional("z", ParameterType.INTEGER, "North-south coordinate of the destination."),
+				Parameter.optional("place", ParameterType.STRING,
+						"The name of a remembered place to travel to instead of coordinates. 'recall' "
+								+ "lists what is known."),
 				Parameter.optional("y", ParameterType.INTEGER,
 						"Height. Omit to arrive at ground level, whatever that turns out to be."),
 				Travel.PARAMETER,
@@ -52,6 +62,13 @@ public final class GotoAction implements Action {
 
 	@Override
 	public ActionResult run(ActionContext context, Arguments arguments) {
+		if (arguments.has("place")) {
+			return toRemembered(context, arguments);
+		}
+		if (!arguments.has("x") || !arguments.has("z")) {
+			return ActionResult.failed("Give x and z, or a remembered place name as 'place'. "
+					+ "'recall' lists what is remembered.");
+		}
 		int x = arguments.getInt("x");
 		int z = arguments.getInt("z");
 		TravelMode mode = Travel.mode(arguments);
@@ -72,5 +89,43 @@ public final class GotoAction implements Action {
 
 		context.controller().navigateTo(goal, mode);
 		return ActionResult.ok("Heading to " + goal.describe() + "." + Travel.note(mode));
+	}
+
+	/**
+	 * Travels to somewhere the bot has written down.
+	 *
+	 * <p>Refuses across dimensions rather than setting off. The same coordinates in the nether are
+	 * somewhere else entirely, and a bot that cheerfully walks to a base's overworld coordinates while
+	 * standing in the nether has not misunderstood the request — it has answered a different one.</p>
+	 *
+	 * <p>The exact height is used here, unlike a bare goto: a remembered place is a spot somebody
+	 * stood on, not a column guessed at from a distance.</p>
+	 */
+	private static ActionResult toRemembered(ActionContext context, Arguments arguments) {
+		String name = arguments.getString("place").trim();
+		Place place = Places.named(context.minecraft(), name);
+		if (place == null) {
+			List<Place> known = Places.here(context.minecraft());
+			return ActionResult.failed("Nothing remembered called '" + name + "'. Known here: "
+					+ (known.isEmpty()
+							? "nothing yet — use remember to write somewhere down"
+							: known.stream().map(Place::name).collect(Collectors.joining(", "))));
+		}
+
+		String dimension = Places.dimensionKey(context.minecraft());
+		if (!place.dimension().equals(dimension)) {
+			return ActionResult.failed(place.name() + " is in " + place.dimension() + " and the bot is "
+					+ "in " + dimension + ". Travel between dimensions is not something the bot can do "
+					+ "by itself — go through a portal first, then ask again.");
+		}
+
+		ActionResult rejected = Scaffold.choose(arguments);
+		if (rejected != null) {
+			return rejected;
+		}
+		TravelMode mode = Travel.mode(arguments);
+		context.controller().navigateTo(new GoalBlock(place.pos()), mode);
+		return ActionResult.ok("Heading to " + place.name() + " at " + place.x() + ", " + place.y()
+				+ ", " + place.z() + "." + Travel.note(mode));
 	}
 }

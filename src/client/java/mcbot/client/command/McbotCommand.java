@@ -28,6 +28,8 @@ import mcbot.client.api.BotApi;
 import mcbot.client.control.TravelMode;
 import mcbot.client.gui.McbotKeys;
 import mcbot.client.inventory.ChestSource;
+import mcbot.client.memory.Place;
+import mcbot.client.memory.Places;
 import mcbot.client.Transcript;
 import mcbot.client.settings.Setting;
 import mcbot.client.settings.SettingRegistry;
@@ -57,6 +59,10 @@ import net.minecraft.resources.Identifier;
  *   /mcbot place &lt;block&gt; [&lt;x&gt; &lt;y&gt; &lt;z&gt;]  put a block down, in front or at a spot
  *   /mcbot mine &lt;x&gt; &lt;y&gt; &lt;z&gt;        break the block at that exact spot
  *   /mcbot locate &lt;block&gt; [count]  report where the nearest ones are, without moving
+ *   /mcbot remember &lt;name&gt;   write this spot down under a name
+ *   /mcbot recall [&lt;query&gt;]  list what the bot remembers, nearest first
+ *   /mcbot forget &lt;name&gt;     drop one; 'noticed' drops everything it found by itself
+ *   /mcbot goto &lt;name&gt;       travel to a remembered place
  *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
  *   /mcbot smelt &lt;item&gt; [count]    run a furnace: find it, load it, wait, collect
@@ -99,7 +105,14 @@ public final class McbotCommand {
 
 	public void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
 		dispatcher.register(ClientCommands.literal("mcbot")
-				.then(ClientCommands.literal("goto").then(coordinates(TravelMode.TRY_WALK)))
+				.then(ClientCommands.literal("goto")
+						.then(coordinates(TravelMode.TRY_WALK))
+						// A remembered name, after the numeric forms so a place called "100" still
+						// parses as a height. Brigadier tries the literal branches in order.
+						.then(ClientCommands.<String>argument("place", StringArgumentType.greedyString())
+								.suggests(McbotCommand::suggestPlaces)
+								.executes(context -> run(context, "goto", Arguments.of(
+										"place", StringArgumentType.getString(context, "place"))))))
 				.then(ClientCommands.literal("walk").then(coordinates(TravelMode.WALK)))
 				.then(ClientCommands.literal("dig").then(coordinates(TravelMode.BUILD)))
 				.then(ClientCommands.literal("find")
@@ -179,6 +192,18 @@ public final class McbotCommand {
 										builder))
 								.executes(context -> run(context, "deposit", Arguments.of(
 										"what", StringArgumentType.getString(context, "what"))))))
+				.then(memory())
+				.then(ClientCommands.literal("recall")
+						.executes(context -> run(context, "recall", Arguments.none()))
+						.then(ClientCommands.<String>argument("query", StringArgumentType.greedyString())
+								.suggests(McbotCommand::suggestPlaces)
+								.executes(context -> run(context, "recall", Arguments.of(
+										"query", StringArgumentType.getString(context, "query"))))))
+				.then(ClientCommands.literal("forget")
+						.then(ClientCommands.<String>argument("name", StringArgumentType.greedyString())
+								.suggests(McbotCommand::suggestPlaces)
+								.executes(context -> run(context, "forget", Arguments.of(
+										"name", StringArgumentType.getString(context, "name"))))))
 				.then(set())
 				.then(ClientCommands.literal("config").executes(McbotCommand::openSettings))
 				.then(ai())
@@ -410,6 +435,23 @@ public final class McbotCommand {
 		Minecraft.getInstance().execute(McbotKeys::open);
 		feedback(context, "Opening the settings. The G key opens them too.");
 		return 1;
+	}
+
+	// ---------------------------------------------------------------- memory
+
+	/** {@code remember}, {@code recall} and {@code forget}, which share one suggestion source. */
+	private LiteralArgumentBuilder<FabricClientCommandSource> memory() {
+		return ClientCommands.literal("remember")
+				.then(ClientCommands.<String>argument("name", StringArgumentType.greedyString())
+						.executes(context -> run(context, "remember", Arguments.of(
+								"name", StringArgumentType.getString(context, "name")))));
+	}
+
+	/** Offers the names the bot has written down for this world. */
+	private static CompletableFuture<Suggestions> suggestPlaces(
+			CommandContext<FabricClientCommandSource> context, SuggestionsBuilder builder) {
+		return SharedSuggestionProvider.suggest(
+				Places.here(Minecraft.getInstance()).stream().map(Place::name), builder);
 	}
 
 	// ---------------------------------------------------------------- the action menu

@@ -252,6 +252,44 @@ public final class BotSettings {
 			"How far apart the places 'locate' reports must be, so a vein counts once. 0 lists "
 					+ "neighbouring blocks separately.");
 
+	// ---------------------------------------------------------------- remembering places
+	//
+	// The bot writes down where things are as it goes, so "go back to base" and "where was that
+	// fortress" are questions it can answer tomorrow rather than only in the session it saw them.
+
+	static {
+		SettingRegistry.group("Memory", Tier.SIMPLE);
+	}
+
+	/**
+	 * How often the bot looks around for landmarks worth remembering, in ticks.
+	 *
+	 * <p>Every five seconds. Often enough that walking past a stronghold notices it, rare enough that
+	 * the cost disappears — a scan skips whole 16³ sections on a palette check, so the work is close to
+	 * nothing unless something is actually there. 0 turns the noticing off, leaving only the places
+	 * named by hand.</p>
+	 */
+	public static final IntSetting LANDMARK_SCAN_INTERVAL = new IntSetting(
+			"landmarkScanInterval", 100, 0, 6000,
+			"Ticks between the bot looking round for landmarks to remember — strongholds, fortresses, "
+					+ "villages, portals. 0 stops it noticing anything by itself.");
+
+	/**
+	 * How far the landmark scan reaches.
+	 *
+	 * <p>Bounded in practice by what the client has loaded, so raising it past the render distance
+	 * finds nothing extra. 96 covers the ground either side of a route without reaching so far that
+	 * the bot records places it never actually went near.</p>
+	 */
+	public static final IntSetting LANDMARK_SCAN_RADIUS = new IntSetting(
+			"landmarkScanRadius", 96, 8, 512,
+			"How far around the bot to look for landmarks worth remembering.");
+
+	/** Landmarks recorded per scan. A cap on how much one pass through a city can write down. */
+	public static final IntSetting LANDMARK_SCAN_LIMIT = new IntSetting(
+			"landmarkScanLimit", 4, 1, 32,
+			"How many landmarks one scan may record at most.");
+
 	// ---------------------------------------------------------------- travelling
 
 	static {
