@@ -68,6 +68,13 @@ public final class EnumSetting<E extends Enum<E> & SettingChoice> extends Settin
 				return;
 			}
 		}
+		// Only after every current name has been tried, so an alias can never shadow a real one.
+		for (E option : options) {
+			if (option.aliases().contains(wanted)) {
+				value = option;
+				return;
+			}
+		}
 		throw new IllegalArgumentException(name() + " must be " + Arrays.stream(options)
 				.map(SettingChoice::key)
 				.collect(Collectors.joining(" or ")) + ", not '" + raw + "'.");

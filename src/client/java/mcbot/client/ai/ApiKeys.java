@@ -238,7 +238,7 @@ public final class ApiKeys {
 				+ created + " — it is read fresh each time, so there is no need to restart. "
 				+ "An environment variable of the same name works too, but on Windows 'setx' only "
 				+ "reaches programs started afterwards, so the file is the simpler route. "
-				+ "'/mcbot set aiProvider ollama' works offline meanwhile.";
+				+ "'/mcbot set aiProvider ollama-local' works offline meanwhile.";
 	}
 
 	/**

@@ -292,11 +292,11 @@ public final class OpenAiProvider implements LlmProvider {
 		if (status == 429 || lower.contains("rate limit") || lower.contains("quota")) {
 			return "Out of allowance on " + flavour.label() + " for " + model()
 					+ ". Either the per-minute rate limit or the account balance — the message says "
-					+ "which: " + brief(body) + " '/mcbot set aiProvider ollama' works offline meanwhile.";
+					+ "which: " + brief(body) + " '/mcbot set aiProvider ollama-local' works offline meanwhile.";
 		}
 		if (status == 402 || lower.contains("insufficient") || lower.contains("billing")) {
 			return flavour.label() + " says the account has no credit left. Top it up, or use "
-					+ "'/mcbot set aiProvider ollama' meanwhile.";
+					+ "'/mcbot set aiProvider ollama-local' meanwhile.";
 		}
 		return flavour.label() + " returned HTTP " + status + ": " + brief(body);
 	}

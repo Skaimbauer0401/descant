@@ -9,6 +9,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -92,6 +93,45 @@ public final class ModelCatalogue {
 	/** Why the fetch failed, in a sentence. Empty unless the state is {@link State#FAILED}. */
 	public static String problem(AiProvider provider) {
 		return BY_PROVIDER.getOrDefault(provider, UNASKED).problem();
+	}
+
+	/**
+	 * Everything worth offering for this provider — what it listed, plus what we would suggest.
+	 *
+	 * <p>Never empty, and never fewer than the provider's own suggestions, so the chooser always has
+	 * something in it: before a fetch has finished, when there is no key, and when the machine is
+	 * offline. The recommended one leads whatever else is going on.</p>
+	 *
+	 * <p>The two sources stay distinguishable — see {@link #confirmed} — because a name the provider
+	 * did not list is not the same kind of thing as one it did, and quietly mixing them would be
+	 * offering a withdrawn model id as though it were current.</p>
+	 *
+	 * @param current the value in use, which is always included even if nothing else knows about it
+	 */
+	public static List<String> choices(AiProvider provider, String current) {
+		List<String> all = new ArrayList<>();
+		all.add(provider.recommendedModel());
+		if (current != null && !current.isBlank()) {
+			all.add(current);
+		}
+		all.addAll(models(provider));
+		all.addAll(provider.suggestedModels());
+
+		// Insertion-ordered and de-duplicated: the recommendation first, then what is in use, then the
+		// provider's own list, then the rest of the suggestions.
+		return List.copyOf(new LinkedHashSet<>(all));
+	}
+
+	/**
+	 * Whether the provider itself listed this model.
+	 *
+	 * <p>False for a suggestion that has not been confirmed — either because the list has not been
+	 * fetched, or because it has and this name was not on it. The chooser marks those rather than
+	 * hiding them: an unadvertised name often still works, and a withdrawn one should not look
+	 * identical to a current one.</p>
+	 */
+	public static boolean confirmed(AiProvider provider, String model) {
+		return models(provider).contains(model);
 	}
 
 	// ---------------------------------------------------------------- asking

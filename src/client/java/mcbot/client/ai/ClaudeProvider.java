@@ -154,7 +154,7 @@ public final class ClaudeProvider implements LlmProvider {
 				response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 			} catch (ConnectException | UnknownHostException e) {
 				throw new IOException("Can't reach the Anthropic API — check the internet connection. "
-						+ "'/mcbot set aiProvider ollama' runs offline.");
+						+ "'/mcbot set aiProvider ollama-local' runs offline.");
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				throw new IOException("Interrupted while waiting for Claude.");
@@ -304,11 +304,11 @@ public final class ClaudeProvider implements LlmProvider {
 		if (status == 400 && lower.contains("credit balance")) {
 			return "The Anthropic account is out of credit. Top it up at console.anthropic.com — the "
 					+ "API is billed separately from a Pro or Max subscription and is not included in "
-					+ "one. '/mcbot set aiProvider ollama' works offline meanwhile.";
+					+ "one. '/mcbot set aiProvider ollama-local' works offline meanwhile.";
 		}
 		if (status == 429 || lower.contains("rate_limit_error")) {
 			return "Rate-limited by Anthropic. Wait a moment and try again, or switch with "
-					+ "'/mcbot set aiProvider ollama'.";
+					+ "'/mcbot set aiProvider ollama-local'.";
 		}
 		if (status == 529 || lower.contains("overloaded_error")) {
 			return "Anthropic is overloaded right now. Try again shortly.";

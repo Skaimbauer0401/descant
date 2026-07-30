@@ -327,7 +327,7 @@ public final class BotSettings {
 	 * several popular small models including the Gemma family.</p>
 	 */
 	public static final StringSetting AI_OLLAMA_MODEL = new StringSetting(
-			"aiOllamaModel", "gemma4:12b",
+			"aiOllamaModel", AiProvider.OLLAMA.recommendedModel(),
 			"an installed, tool-capable Ollama model",
 			"The local model that drives the bot, used when aiProvider is 'ollama'. Must support tool "
 					+ "calling. gemma4:12b picks actions correctly and runs entirely on this machine; "
@@ -346,7 +346,7 @@ public final class BotSettings {
 	 * change this. Needs {@code ollama signin} once.</p>
 	 */
 	public static final StringSetting AI_CLOUD_MODEL = new StringSetting(
-			"aiCloudModel", "minimax-m3:cloud",
+			"aiCloudModel", AiProvider.CLOUD.recommendedModel(),
 			"an Ollama cloud model name",
 			"The cloud model, used when aiProvider is 'cloud'. Needs 'ollama signin' once. Stronger than "
 					+ "anything local, at the cost of sending the conversation off this machine. "
@@ -360,7 +360,7 @@ public final class BotSettings {
 	 * the difference in how well the bot behaves.</p>
 	 */
 	public static final StringSetting AI_CLAUDE_MODEL = new StringSetting(
-			"aiClaudeModel", "claude-haiku-4-5-20251001",
+			"aiClaudeModel", AiProvider.CLAUDE.recommendedModel(),
 			"an Anthropic model id",
 			"Which Claude model to use when aiProvider is 'claude'. Haiku is the cheap, fast one and "
 					+ "is well suited to picking actions; claude-sonnet-4-5 is stronger and dearer.");
@@ -374,7 +374,7 @@ public final class BotSettings {
 	 * provider is selected, and picking from that is the intended route.</p>
 	 */
 	public static final StringSetting AI_CHATGPT_MODEL = new StringSetting(
-			"aiChatgptModel", "gpt-4.1-mini",
+			"aiChatgptModel", AiProvider.CHATGPT.recommendedModel(),
 			"an OpenAI model id",
 			"Which OpenAI model to use when aiProvider is 'chatgpt'. The mini tier is well suited to "
 					+ "picking actions and far cheaper. The settings screen lists what your key can "
@@ -387,7 +387,7 @@ public final class BotSettings {
 	 * current model, which is the closest thing to a default that does not go stale.</p>
 	 */
 	public static final StringSetting AI_QWEN_MODEL = new StringSetting(
-			"aiQwenModel", "qwen-plus",
+			"aiQwenModel", AiProvider.QWEN.recommendedModel(),
 			"a DashScope model id",
 			"Which Qwen model to use when aiProvider is 'qwen'. qwen-plus is an alias that follows a "
 					+ "current model rather than a fixed snapshot. The settings screen lists what your "
@@ -400,7 +400,7 @@ public final class BotSettings {
 	 * rather than a preview id that will be withdrawn.</p>
 	 */
 	public static final StringSetting AI_KIMI_MODEL = new StringSetting(
-			"aiKimiModel", "moonshot-v1-8k",
+			"aiKimiModel", AiProvider.KIMI.recommendedModel(),
 			"a Moonshot model id",
 			"Which Kimi model to use when aiProvider is 'kimi'. moonshot-v1-8k is the long-lived stable "
 					+ "name; the K2 models are stronger and are listed by the settings screen once a key "
@@ -409,11 +409,15 @@ public final class BotSettings {
 	/**
 	 * Where the model comes from.
 	 *
-	 * <p>Defaults to {@code ollama}: the one that costs nothing, needs no account and sends nothing
-	 * anywhere. A default that quietly bills someone would be the wrong way round, however cheap.</p>
+	 * <p>Defaults to {@code ollama-cloud}, which is also what the screen recommends. It used to default
+	 * to the local one on the grounds that a default should not quietly bill anybody — still true, and
+	 * still the reason none of the per-token providers is the default. But an Ollama cloud model is not
+	 * billed per token either: it needs {@code ollama signin} once and nothing after that. Set against
+	 * that, defaulting to a local model meant defaulting to the one option that reliably picks the
+	 * wrong action, which is a worse first impression than being asked to sign in.</p>
 	 */
 	public static final EnumSetting<AiProvider> AI_PROVIDER = new EnumSetting<>(
-			"aiProvider", AiProvider.OLLAMA,
+			"aiProvider", AiProvider.CLOUD,
 			"Which model drives the bot. 'ollama' runs one on this machine, free and private; 'cloud' "
 					+ "is an Ollama cloud model proxied through the same daemon. 'claude', 'chatgpt', "
 					+ "'qwen' and 'kimi' are hosted APIs, each billed per token and each needing its own "

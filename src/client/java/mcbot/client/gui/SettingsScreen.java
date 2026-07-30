@@ -92,7 +92,7 @@ public final class SettingsScreen extends Screen {
 			showing = list.showAll(text);
 		});
 
-		list = addRenderableWidget(new SettingsList(minecraft, width, height - HEADER - FOOTER, HEADER));
+		list = addRenderableWidget(new SettingsList(minecraft, width, height - HEADER - FOOTER, HEADER, this));
 
 		resetAll = addRenderableWidget(
 				Button.builder(Component.literal("Reset all"), button -> resetAll())
@@ -126,6 +126,19 @@ public final class SettingsScreen extends Screen {
 		if (advanced) {
 			setInitialFocus(search);
 		}
+	}
+
+	/**
+	 * Opens a chooser over this screen, saving anything half-entered first.
+	 *
+	 * <p>The saving is the point. Leaving here does not go through {@link #onClose}, so a key that had
+	 * been pasted but not yet committed would simply be gone — and while clicking a chooser button does
+	 * take focus off the key box, the commit that focus loss triggers happens on the <em>next</em>
+	 * frame, which by then belongs to a different screen.</p>
+	 */
+	void openChooser(Screen chooser) {
+		list.commit();
+		minecraft.gui.setScreen(chooser);
 	}
 
 	/**

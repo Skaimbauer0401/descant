@@ -240,7 +240,7 @@ public final class OllamaProvider implements LlmProvider {
 		if (lower.contains("llama-server") || lower.contains("binary not found")) {
 			return "Your Ollama install is missing its local runner (llama-server), so no local model "
 					+ "can start. Reinstall Ollama from ollama.com — or use a cloud model instead with "
-					+ "'/mcbot set aiProvider cloud', which is proxied and does not need it.";
+					+ "'/mcbot set aiProvider ollama-cloud', which is proxied and does not need it.";
 		}
 		if (status == 410 || lower.contains("was retired")) {
 			return model() + " has been retired by Ollama. Pick a current one — "
@@ -265,7 +265,7 @@ public final class OllamaProvider implements LlmProvider {
 			// Hit for real while testing: the free tier returns 429 with "session usage limit", which
 			// matches none of the words one would think to look for.
 			return "Out of Ollama cloud allowance for " + model() + " — it resets after a while. "
-					+ "Switch to the local model meanwhile with '/mcbot set aiProvider ollama'.";
+					+ "Switch to the local model meanwhile with '/mcbot set aiProvider ollama-local'.";
 		}
 		return "Ollama returned HTTP " + status + ": " + brief(body);
 	}

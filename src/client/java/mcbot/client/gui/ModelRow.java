@@ -1,6 +1,5 @@
 package mcbot.client.gui;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import mcbot.client.BotSettings;
@@ -11,8 +10,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.CycleButton;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.network.chat.Component;
 
@@ -25,24 +22,30 @@ import net.minecraft.network.chat.Component;
  * caught this project twice: there is no way to set the wrong provider's model from here, because the
  * wrong provider's model is not on the screen.</p>
  *
- * <p>The values come from {@link ModelCatalogue}, which asks the provider. A hardcoded list would be
- * wrong within weeks and wrong silently. Until an answer arrives — and if none ever does, because the
- * key is missing or the machine is offline — the row is a text box instead, so a name can always be
- * typed even when nothing can be listed.</p>
+ * <p>Clicking opens a {@link ChoiceScreen} rather than cycling. A cycling button was tolerable for
+ * four names and absurd for the sixty a hosted provider will list, and it could not show which of
+ * them is the one to pick — which, given the whole point of the list is that most entries are wrong
+ * for this job, is the only thing worth showing.</p>
+ *
+ * <p>The list always has something in it. {@link ModelCatalogue#choices} merges what the provider
+ * actually listed with what this mod would suggest, so the chooser works before the fetch finishes,
+ * without a key, and offline — and anything the provider did not confirm is marked rather than
+ * quietly offered as current.</p>
  */
 final class ModelRow extends Row {
 
+	private final SettingsScreen screen;
+	private final Button open;
 	private final Button refresh;
 	private final Button reset;
 
-	/** Rebuilt whenever the provider or the catalogue changes; never null after the first draw. */
-	private AbstractWidget control;
-
-	/** What {@link #control} was built for, so it is rebuilt exactly when it has gone stale. */
-	private String builtFor = "";
-
-	ModelRow(Minecraft minecraft) {
+	ModelRow(Minecraft minecraft, SettingsScreen screen) {
 		super(minecraft);
+		this.screen = screen;
+
+		this.open = Button.builder(Component.literal(""), button -> choose())
+				.size(CONTROL_WIDTH, WIDGET_HEIGHT)
+				.build();
 
 		this.refresh = Button.builder(Component.literal("⟳"),
 						button -> ModelCatalogue.refresh(provider()))
@@ -51,10 +54,7 @@ final class ModelRow extends Row {
 		this.refresh.setTooltip(Tooltip.create(Component.literal(
 				"Ask the provider what models it has, again.")));
 
-		this.reset = Button.builder(Component.literal("↺"), button -> {
-					setting().restore();
-					builtFor = "";
-				})
+		this.reset = Button.builder(Component.literal("↺"), button -> setting().restore())
 				.size(BUTTON_WIDTH, WIDGET_HEIGHT)
 				.build();
 	}
@@ -67,60 +67,47 @@ final class ModelRow extends Row {
 		return provider().modelSetting();
 	}
 
-	// ---------------------------------------------------------------- the control
+	// ---------------------------------------------------------------- choosing
 
-	/**
-	 * Rebuilds the control when what it should offer has changed.
-	 *
-	 * <p>Keyed on the provider, the state of its catalogue and the value itself. A cycling button is
-	 * built around a fixed list, so a list that has grown means a new button — there is no way to add
-	 * to one in place.</p>
-	 */
-	private void rebuildIfStale() {
+	private void choose() {
 		AiProvider provider = provider();
-		List<String> models = ModelCatalogue.models(provider);
-		String wanted = provider.key() + "|" + ModelCatalogue.state(provider) + "|" + models.size()
-				+ "|" + setting().get();
-		if (wanted.equals(builtFor)) {
-			return;
-		}
-		builtFor = wanted;
+		// Asked again here as well as while drawing, so a chooser opened straight after switching
+		// provider is not stuck with whatever the previous fetch left behind.
+		ModelCatalogue.request(provider);
 
-		if (models.isEmpty()) {
-			EditBox box = new EditBox(minecraft.font, 0, 0, CONTROL_WIDTH, WIDGET_HEIGHT,
-					Component.literal("model"));
-			box.setMaxLength(128);
-			box.setValue(setting().get());
-			box.setResponder(this::apply);
-			control = box;
-			return;
-		}
+		String recommended = provider.recommendedModel();
+		List<ChoiceScreen.Option> options = ModelCatalogue.choices(provider, setting().get()).stream()
+				.map(model -> new ChoiceScreen.Option(
+						model,
+						model,
+						note(provider, model, recommended),
+						model.equals(recommended),
+						!ModelCatalogue.confirmed(provider, model)))
+				.toList();
 
-		// The current value is always offered, even when the provider did not list it. It may be a
-		// name that still works and simply is not advertised — and a picker that cannot show what is
-		// already selected is a picker that changes the setting just by being opened.
-		List<String> values = new ArrayList<>(models);
-		if (!values.contains(setting().get())) {
-			values.addFirst(setting().get());
-		}
-		control = CycleButton.builder(Component::literal, setting().get())
-				.withValues(values)
-				.displayOnlyValue()
-				.create(0, 0, CONTROL_WIDTH, WIDGET_HEIGHT, Component.literal("model"),
-						(button, value) -> apply(value));
+		screen.openChooser(new ChoiceScreen(screen,
+				Component.literal("Which " + provider.label() + " model"),
+				options, setting().get(),
+				"a model id not on the list",
+				value -> setting().change(value)));
 	}
 
-	private void apply(String value) {
-		try {
-			setting().change(value);
-			// Deliberately not rebuilding here: doing so mid-keystroke would replace the box being
-			// typed into. The key includes the value, so the next frame picks it up.
-			builtFor = provider().key() + "|" + ModelCatalogue.state(provider()) + "|"
-					+ ModelCatalogue.models(provider()).size() + "|" + value;
-		} catch (RuntimeException e) {
-			// A blank name is the only thing a StringSetting refuses, and it happens while clearing the
-			// box to type a new one. Nothing to report; the old value stands until a real one arrives.
+	private static String note(AiProvider provider, String model, String recommended) {
+		if (model.equals(recommended)) {
+			return "The one to start with for " + provider.label()
+					+ ": about the capability this job needs, which is reliable function choice rather "
+					+ "than deep reasoning, at the lowest price that delivers it.";
 		}
+		if (!ModelCatalogue.confirmed(provider, model)) {
+			return ModelCatalogue.state(provider) == ModelCatalogue.State.READY
+					? provider.label() + " did not list this one, so it may have been withdrawn — or it "
+							+ "may simply be unadvertised, which happens and still works. Try it and see; "
+							+ "a model that is really gone says so on the first request."
+					: "A suggestion. " + provider.label() + "'s own list has not arrived yet, so nothing "
+							+ "here has been confirmed against it.";
+		}
+		return provider.label() + " lists this one. Not every model can call tools, and one that "
+				+ "cannot says so on the first request.";
 	}
 
 	// ---------------------------------------------------------------- drawing it
@@ -132,13 +119,15 @@ final class ModelRow extends Row {
 		// Asked for the first time as the row is first drawn, rather than when it is built: the answer
 		// is only interesting while somebody is looking at it.
 		ModelCatalogue.request(provider);
-		rebuildIfStale();
+
+		open.setMessage(Component.literal(setting().get()));
+		open.setTooltip(Tooltip.create(explanation(provider)));
 
 		reset.active = !setting().isDefault();
-		reset.setTooltip(Tooltip.create(Component.literal(
-				"Back to the default for " + provider.label() + ", " + setting().defaultAsString() + ".")));
+		reset.setTooltip(Tooltip.create(Component.literal("Back to the recommended model for "
+				+ provider.label() + ", " + setting().defaultAsString() + ".")));
 
-		int labelStop = place(graphics, mouseX, mouseY, partialTick, control, reset, refresh);
+		int labelStop = place(graphics, mouseX, mouseY, partialTick, open, reset, refresh);
 		drawLabel(graphics, "model" + status(provider), labelStop, colour(provider),
 				() -> explanation(provider), mouseX, mouseY);
 	}
@@ -146,7 +135,7 @@ final class ModelRow extends Row {
 	private static String status(AiProvider provider) {
 		return switch (ModelCatalogue.state(provider)) {
 			case LOADING -> " (asking…)";
-			case FAILED -> " (type it in)";
+			case FAILED -> " (suggestions only)";
 			case UNASKED, READY -> "";
 		};
 	}
@@ -162,23 +151,24 @@ final class ModelRow extends Row {
 	private static Component explanation(AiProvider provider) {
 		StringBuilder text = new StringBuilder("Which ").append(provider.label())
 				.append(" model drives the bot. Stored as ").append(setting().name())
-				.append(", so each provider remembers its own.");
+				.append(", so each provider remembers its own. Click to choose, or to type in a name "
+						+ "that is not on the list.");
 
-		if (ModelCatalogue.state(provider) == ModelCatalogue.State.FAILED) {
-			text.append("\n\nCouldn't list them: ").append(ModelCatalogue.problem(provider))
-					.append("\n\nThe name can still be typed in, and ⟳ tries again.");
-		} else if (ModelCatalogue.state(provider) == ModelCatalogue.State.READY) {
-			text.append("\n\n").append(ModelCatalogue.models(provider).size())
-					.append(" models listed by ").append(provider.label())
-					.append(" for this key. Not all of them can call tools, and one that cannot says so "
-							+ "on the first request.");
+		switch (ModelCatalogue.state(provider)) {
+			case READY -> text.append("\n\n").append(ModelCatalogue.models(provider).size())
+					.append(" models listed by ").append(provider.label()).append(" for this key.");
+			case FAILED -> text.append("\n\nCouldn't ask ").append(provider.label())
+					.append(" what it has: ").append(ModelCatalogue.problem(provider))
+					.append("\n\nThe suggested names are still offered, and ⟳ tries again.");
+			case LOADING -> text.append("\n\nAsking ").append(provider.label()).append(" what it has.");
+			case UNASKED -> {
+			}
 		}
 		return Component.literal(text.toString());
 	}
 
 	@Override
 	protected List<? extends AbstractWidget> widgets() {
-		// control is null until the first draw, and the list asks for this before then.
-		return control == null ? List.of(reset, refresh) : List.of(control, reset, refresh);
+		return List.of(open, reset, refresh);
 	}
 }

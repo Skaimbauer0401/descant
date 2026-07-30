@@ -31,16 +31,18 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 	/**
 	 * Kept across rebuilds rather than made fresh each time.
 	 *
-	 * <p>Both hold state that is not in any setting — a model list being fetched, a key part-way
-	 * through being pasted — and a rebuild that dropped it would lose whatever was being typed at
-	 * whatever moment the list happened to be rebuilt.</p>
+	 * <p>They hold state that is not in any setting — a model list being fetched, a key part-way
+	 * through being pasted — and a rebuild that dropped it would lose whatever was in hand at whatever
+	 * moment the list happened to be rebuilt.</p>
 	 */
+	private final ProviderRow providerRow;
 	private final ModelRow modelRow;
 	private final KeyRow keyRow;
 
-	SettingsList(Minecraft minecraft, int width, int height, int y) {
+	SettingsList(Minecraft minecraft, int width, int height, int y, SettingsScreen screen) {
 		super(minecraft, width, height, y, Row.ROW_HEIGHT);
-		this.modelRow = new ModelRow(minecraft);
+		this.providerRow = new ProviderRow(minecraft, screen);
+		this.modelRow = new ModelRow(minecraft, screen);
 		this.keyRow = new KeyRow(minecraft);
 	}
 
@@ -71,7 +73,7 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 		String modelGroup = SettingRegistry.groupOf(BotSettings.AI_PROVIDER);
 
 		addEntry(new GroupRow(minecraft, modelGroup));
-		addEntry(new ValueRow(minecraft, BotSettings.AI_PROVIDER));
+		addEntry(providerRow);
 		addEntry(modelRow);
 		addEntry(keyRow);
 		int shown = 3;
