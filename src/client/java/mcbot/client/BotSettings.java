@@ -828,9 +828,23 @@ public final class BotSettings {
 		SettingRegistry.group("Combat and eating", Tier.ADVANCED);
 	}
 
-	/** Interaction reach. Vanilla survival is 4.5; stay under it for block break/place. */
-	public static final DoubleSetting REACH = new DoubleSetting("reach", 4.0, 1.0, 4.5,
-			"How far the bot will reach to break or place a block. Vanilla's limit is 4.5.");
+	/**
+	 * Interaction reach, in blocks.
+	 *
+	 * <p>Vanilla's survival limit exactly. It used to sit at 4.0 to keep a margin under that ceiling,
+	 * on the theory that a request at the very edge might be refused — but the margin was costing a
+	 * real thing on every job, since a block half a metre further away means an extra step, an extra
+	 * re-approach, and sometimes a whole extra movement planned to reach something that was already in
+	 * range.</p>
+	 *
+	 * <p>What to watch for if this ever misbehaves: the server checks this distance too, and a request
+	 * right on the boundary is the one it can decide differently about — the symptom would be breaks
+	 * or places that are accepted locally and quietly undone a moment later. Dropping back to 4.4
+	 * restores the margin without giving up much.</p>
+	 */
+	public static final DoubleSetting REACH = new DoubleSetting("reach", 4.5, 1.0, 4.5,
+			"How far the bot will reach to break or place a block. 4.5 is vanilla's limit exactly; "
+					+ "lower it slightly if the server refuses actions at the very edge of range.");
 
 	/**
 	 * Eat when hunger is at or below this. Sprinting needs more than 6 hunger points, so topping up

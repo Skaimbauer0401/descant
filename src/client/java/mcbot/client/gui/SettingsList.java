@@ -73,10 +73,7 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 		String modelGroup = SettingRegistry.groupOf(BotSettings.AI_PROVIDER);
 
 		addEntry(new GroupRow(minecraft, modelGroup));
-		addEntry(providerRow);
-		addEntry(modelRow);
-		addEntry(keyRow);
-		int shown = 3;
+		int shown = addAiRows();
 
 		for (Setting setting : SettingRegistry.all()) {
 			if (isSimple(setting) && SettingRegistry.groupOf(setting).equals(modelGroup)) {
@@ -104,17 +101,35 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 	}
 
 	/**
-	 * Whether a setting gets a row of its own on the simple page.
+	 * The three purpose-built rows that stand in for seven settings, on either page.
 	 *
-	 * <p>The provider and the six model names are excluded because the three purpose-built rows above
-	 * already cover them — and showing {@code aiClaudeModel} next to a model row that is pointed at
-	 * {@code aiOllamaModel} would put the trap those rows exist to remove straight back on the
-	 * screen.</p>
+	 * <p>{@code aiProvider} becomes a chooser that shows all six providers at once with their prices
+	 * and which of them already has a key; the six model settings become one model row pointed at
+	 * whichever is live; and the key that none of them may hold gets a masked box of its own.</p>
+	 *
+	 * <p>On <em>both</em> pages, not just the simple one. Showing the raw settings on the advanced tab
+	 * as well meant two different controls for the same value — a plain text box for
+	 * {@code aiClaudeModel} sitting a few rows from a chooser that fetches the real list — and the
+	 * worse of the two was the one that also puts the six-settings trap back on the screen. There is no
+	 * version of "advanced" that is improved by a worse control.</p>
+	 *
+	 * @return how many rows carry a value
 	 */
+	private int addAiRows() {
+		addEntry(providerRow);
+		addEntry(modelRow);
+		addEntry(keyRow);
+		return 3;
+	}
+
+	/** Whether one of {@link #addAiRows} already covers this setting. */
+	private static boolean coveredByAiRows(Setting setting) {
+		return setting == BotSettings.AI_PROVIDER || AiProvider.readerOf(setting) != null;
+	}
+
+	/** Whether a setting gets a row of its own on the simple page. */
 	private static boolean isSimple(Setting setting) {
-		return SettingRegistry.tierOf(setting) == Tier.SIMPLE
-				&& setting != BotSettings.AI_PROVIDER
-				&& AiProvider.readerOf(setting) == null;
+		return SettingRegistry.tierOf(setting) == Tier.SIMPLE && !coveredByAiRows(setting);
 	}
 
 	/**
@@ -122,7 +137,11 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 	 *
 	 * <p>Everything, not just the advanced half: this is the page that has a search box, and a search
 	 * that quietly refuses to find {@code showPath} because it lives on the other tab is a search that
-	 * cannot be trusted. Nothing is unreachable from here.</p>
+	 * cannot be trusted.</p>
+	 *
+	 * <p>The seven the AI rows cover are the one exception, and they are replaced rather than dropped:
+	 * searching {@code claude} still turns up the provider and model rows, because a search that
+	 * matched {@code aiClaudeModel} and then showed nothing would be worse than either.</p>
 	 *
 	 * @return how many settings are showing
 	 */
@@ -131,6 +150,7 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 		String wanted = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
 
 		String heading = null;
+		boolean aiShown = false;
 		int shown = 0;
 		for (Setting setting : SettingRegistry.all()) {
 			if (!matches(setting, wanted)) {
@@ -141,6 +161,16 @@ final class SettingsList extends ContainerObjectSelectionList<Row> {
 			if (!group.equals(heading)) {
 				heading = group;
 				addEntry(new GroupRow(minecraft, group));
+			}
+
+			if (coveredByAiRows(setting)) {
+				// Any of the seven brings up all three rows, once. Which of them matched the search does
+				// not change what there is to show.
+				if (!aiShown) {
+					aiShown = true;
+					shown += addAiRows();
+				}
+				continue;
 			}
 			addEntry(new ValueRow(minecraft, setting));
 			shown++;
