@@ -81,6 +81,12 @@ public final class StatusAction implements Action {
 		// ---- how it is faring
 		text.append(" | health ").append(Math.round(player.getHealth())).append("/20");
 		text.append(", hunger ").append(player.getFoodData().getFoodLevel()).append("/20");
+		// Not a footnote about speed. Below the sprinting threshold the bot cannot make the longer
+		// jumps at all, so routes that existed a minute ago stop existing — which looks from outside
+		// like the pathfinder having got worse, and is worth saying rather than leaving to be deduced.
+		if (!BotController.canSprint(player)) {
+			text.append(" (too low to sprint, so no long jumps)");
+		}
 		text.append(" | inventory ").append(Math.round(InventoryManager.fullness(player) * 100)).append("% full");
 
 		// The full flag rides along with the chest because a completed action reports this whole line

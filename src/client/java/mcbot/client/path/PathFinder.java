@@ -82,6 +82,15 @@ public final class PathFinder {
 	private final boolean allowPlace;
 	private final boolean allowParkour;
 
+	/**
+	 * Whether the bot can sprint, which in vanilla means hunger above 6.
+	 *
+	 * <p>Snapshotted at construction rather than read live, like {@link #tools}: the search is spread
+	 * across ticks, and a route half planned as a sprinter and half as a walker would be a route that
+	 * is valid nowhere.</p>
+	 */
+	private final boolean canSprint;
+
 	private final Map<Long, Node> nodes = new HashMap<>();
 	private final PriorityQueue<Entry> open = new PriorityQueue<>();
 
@@ -112,13 +121,15 @@ public final class PathFinder {
 	private State state = State.SEARCHING;
 
 	/**
-	 * @param tools    snapshot of the hotbar, used to estimate mining times without touching the live
-	 *                 inventory from inside the search
-	 * @param favoured positions on the route being replaced, whose cost is discounted; pass an empty
-	 *                 set for a fresh journey
+	 * @param tools     snapshot of the hotbar, used to estimate mining times without touching the live
+	 *                  inventory from inside the search
+	 * @param canSprint whether the bot can sprint right now; when it cannot, the jumps that need one
+	 *                  are not generated at all
+	 * @param favoured  positions on the route being replaced, whose cost is discounted; pass an empty
+	 *                  set for a fresh journey
 	 */
 	public PathFinder(WorldView world, BlockPos start, Goal goal, List<ItemStack> tools,
-			boolean allowBreak, boolean allowPlace, boolean allowParkour,
+			boolean allowBreak, boolean allowPlace, boolean allowParkour, boolean canSprint,
 			Set<Long> favoured) {
 		this.world = world;
 		this.goal = goal;
@@ -126,6 +137,7 @@ public final class PathFinder {
 		this.allowBreak = allowBreak;
 		this.allowPlace = allowPlace;
 		this.allowParkour = allowParkour;
+		this.canSprint = canSprint;
 		this.favoured = favoured;
 
 		Arrays.fill(bestBlend, Double.POSITIVE_INFINITY);
@@ -442,7 +454,15 @@ public final class PathFinder {
 			return;
 		}
 
-		for (int distance = 2; distance <= BotSettings.MAX_PARKOUR_DISTANCE.get(); distance++) {
+		int furthest = BotSettings.MAX_PARKOUR_DISTANCE.get();
+		if (!canSprint) {
+			// Hunger at or below 6 and vanilla simply refuses to sprint. A jump priced and flown as a
+			// sprint then leaves at walking speed and lands in the gap, which is not a slower route but
+			// a fall — so the long ones are not generated at all rather than generated and hoped for.
+			furthest = Math.min(furthest, BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get() - 1);
+		}
+
+		for (int distance = 2; distance <= furthest; distance++) {
 			BlockPos column = from.offset(dx * distance, 0, dz * distance);
 			if (!world.isKnown(column)) {
 				return; // cannot see the landing; do not guess across unloaded chunks
@@ -456,7 +476,10 @@ public final class PathFinder {
 			// only worth generating for the shorter jumps — but without it every raised ledge across a
 			// gap has to be bridged or walked around.
 			BlockPos higher = column.above();
-			if (distance <= BotSettings.MAX_PARKOUR_ASCEND_DISTANCE.get()
+			// Every ascending jump is flown at a sprint whatever its length — part of the arc is spent
+			// climbing, so it needs the speed to still reach — which means none of them at all when
+			// there is no sprint to be had.
+			if (canSprint && distance <= BotSettings.MAX_PARKOUR_ASCEND_DISTANCE.get()
 					&& world.isKnown(higher) && simFitsAt(higher) && simFlushFloor(column)
 					&& ascendCorridorClear(from, dx, dz, distance)) {
 				addParkour(node, higher, distance, dx, dz, true);

@@ -1592,6 +1592,16 @@ public final class BotController {
 
 		Path.Step next = path.step(stepIndex);
 
+		// Hunger can drop while a route is being walked, and the route was planned by something that
+		// asked once at the start. A jump that needed a sprint when it was planned is a fall now, so
+		// the plan is thrown away rather than flown — the replan is told what the bot can do and comes
+		// back with something walkable.
+		if (next.parkour() && needsSprint(next) && !canSprint(player)) {
+			message("Too hungry to sprint, so that jump is off — finding another way round.");
+			replan(minecraft);
+			return;
+		}
+
 		// Genuinely off-route: shoved by a mob, fell, or the terrain was not what we planned for.
 		// A parkour jump is exempt: the whole point is to be airborne several blocks from both ends of
 		// the movement, which would trip this every time. A missed jump instead stops making progress
@@ -1699,7 +1709,22 @@ public final class BotController {
 				allowBreak,
 				allowPlace,
 				allowParkour,
+				canSprint(player),
 				favoured);
+	}
+
+	/**
+	 * Whether the bot can sprint at all right now.
+	 *
+	 * <p>Vanilla's own rule, asked of vanilla rather than re-derived: hunger above 6, or the ability to
+	 * fly. Hardcoding the 6 here would be a second copy of a number that belongs to the game.</p>
+	 *
+	 * <p>It matters well beyond speed. A sprint-jump carries about four blocks and a walking one about
+	 * two, so losing the sprint does not make a long jump slower — it makes it a fall. Everything that
+	 * plans or flies a jump asks this first.</p>
+	 */
+	public static boolean canSprint(LocalPlayer player) {
+		return player.getFoodData().hasEnoughFood() || player.getAbilities().mayfly;
 	}
 
 	/**
@@ -1778,14 +1803,25 @@ public final class BotController {
 	 * two problems above; with the launch point and the power right, the jump lands on the block, and
 	 * a brake would only rob the next jump of the momentum it needs to chain.</p>
 	 */
+	/**
+	 * Whether this jump can only be made at a sprint.
+	 *
+	 * <p>The long ones, and every ascending one whatever its length — an ascending jump spends part of
+	 * its arc climbing, so it needs the speed to still reach. One definition, read by the planner
+	 * deciding whether to generate the movement and by the executor deciding how to fly it; two
+	 * copies of this rule drifting apart is how a bot plans a jump it then refuses to power.</p>
+	 */
+	private static boolean needsSprint(Path.Step jump) {
+		return jump.parkourDistance() >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get()
+				|| jump.parkourAscend();
+	}
+
 	private void driveParkour(LocalPlayer player, Path.Step jump) {
 		BlockPos from = jump.from();
 		BlockPos destination = jump.pos();
 		BlockPos direction = jump.direction();
 
-		// An ascending jump spends part of its arc climbing, so it always needs the sprint.
-		boolean sprint = jump.parkourDistance() >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get()
-				|| jump.parkourAscend();
+		boolean sprint = needsSprint(jump);
 
 		if (!player.onGround()) {
 			// Committed to the arc. Horizontal velocity is already fixed; keep holding jump while
@@ -2267,6 +2303,13 @@ public final class BotController {
 			input.forward(false);
 		}
 
+		// Coming in to land. Sneaking cuts the speed to about a third, which is what stops the last
+		// stride of a journey sliding past the block it was aimed at — and, for free, stops it walking
+		// off the edge of one.
+		if (settling(position, target)) {
+			input.sneak(true).sprint(false);
+		}
+
 		// Once genuinely falling, stop steering: further input only adds drift, and drifting is how
 		// a planned three-block drop turns into an unplanned six-block one.
 		if (!player.onGround() && player.getDeltaMovement().y < -0.4) {
@@ -2289,6 +2332,26 @@ public final class BotController {
 	}
 
 	/**
+	 * Whether this is the final approach, and momentum is now the enemy rather than the point.
+	 *
+	 * <p>Three conditions, and all three are needed. The route must <b>reach the goal</b> — the end of
+	 * a partial segment is not an arrival, it is as far as the planner could see, and slowing at every
+	 * one of those would crawl a long journey. It must be the <b>last node</b>. And the bot must be
+	 * <b>within reach of it</b>, because sneaking from further out is just a slow walk.</p>
+	 */
+	private boolean settling(Vec3 position, Vec3 target) {
+		double within = BotSettings.ARRIVAL_SNEAK_DISTANCE.get();
+		if (within <= 0.0 || path == null || !path.reachesGoal() || remainingSteps() > 1) {
+			return false;
+		}
+		// Horizontal only. A goal a few blocks below is approached by falling, and sneaking through the
+		// air achieves nothing except arriving with no control over where.
+		double dx = target.x - position.x;
+		double dz = target.z - position.z;
+		return dx * dx + dz * dz <= within * within;
+	}
+
+	/**
 	 * Whether to sprint towards the current step.
 	 *
 	 * <p>Sprinting is a commitment, not a speed setting: it roughly doubles the momentum carried into
@@ -2304,7 +2367,7 @@ public final class BotController {
 	 * node.</p>
 	 */
 	private boolean shouldSprint(Minecraft minecraft, LocalPlayer player) {
-		if (player.isInWater()) {
+		if (player.isInWater() || !canSprint(player)) {
 			return false;
 		}
 		// A jump coming up decides its own run-up: the long jump must reach the launch block at full

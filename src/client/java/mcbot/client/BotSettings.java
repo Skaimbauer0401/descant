@@ -635,6 +635,28 @@ public final class BotSettings {
 	}
 
 	/**
+	 * How close to the last node of a completed route the bot starts sneaking.
+	 *
+	 * <p>Minecraft movement carries momentum, and the bot lets go of the controls when it arrives
+	 * rather than when it should have started stopping — so a walk that ends on a particular block
+	 * slides past it, and the arrival check then fails on the far side of the very block it was aimed
+	 * at. Sneaking cuts the speed to about a third, which bleeds that momentum off over the last block
+	 * or so instead of after it.</p>
+	 *
+	 * <p>It buys a second thing for nothing: sneaking will not walk off an edge. A goal block on a
+	 * ledge, a bridge or the lip of a ravine is exactly where an overshoot is worst, and exactly where
+	 * this now refuses to happen.</p>
+	 *
+	 * <p>Only on the final approach to a route that actually reaches the goal. Doing it at the end of
+	 * every partial segment would slow a long journey to a crawl at each of the joins, which are not
+	 * arrivals at all — merely as far as the planner could see at the time.</p>
+	 */
+	public static final DoubleSetting ARRIVAL_SNEAK_DISTANCE = new DoubleSetting(
+			"arrivalSneakDistance", 1.6, 0.0, 8.0,
+			"How close to the end of a journey the bot starts sneaking, so momentum does not carry it "
+					+ "past the block it was aimed at. 0 turns it off and restores the overshoot.");
+
+	/**
 	 * Distance at which a path node counts as entered, so progress moves to the following node.
 	 * Generous enough that a sprinting player never skims past a node without registering it.
 	 */
