@@ -13,6 +13,7 @@ import mcbot.client.action.ChestTransfer;
 import mcbot.client.action.Crafter;
 import mcbot.client.action.Smelter;
 import mcbot.client.action.CombatAction;
+import mcbot.client.action.Threats;
 import mcbot.client.action.DoorOpener;
 import mcbot.client.action.EatAction;
 import mcbot.client.inventory.InventoryManager;
@@ -1192,6 +1193,23 @@ public final class BotController {
 		// Deliberately not gated on low health. Standing still eating next to a mob that is hitting you
 		// is strictly worse than fighting it off: you take the hits either way, and only one of the two
 		// removes the threat.
+		// 2a. Something already in the air. A fireball two blocks out is more urgent than the zombie
+		// beside us, because the zombie will still be there afterwards and the fireball will not — so a
+		// swat outranks the melee. Blocking does not: an arrow soaked on the shield while something is
+		// hitting us in the face is the wrong trade, and the melee below raises the shield anyway.
+		Threats.Incoming incoming = Threats.incoming(minecraft, player);
+		if (incoming != null && incoming.answer() == Threats.Answer.SWAT) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			status = Status.FIGHTING;
+			if (combat.tickProjectile(minecraft, player, input, incoming) != ActionState.WORKING) {
+				combat.cancel(minecraft, player);
+				status = Status.FOLLOWING;
+			}
+			return true;
+		}
+
 		LivingEntity threat = CombatAction.findThreat(minecraft, player);
 		if (threat != null) {
 			if (status == Status.EATING) {
@@ -1204,6 +1222,20 @@ public final class BotController {
 			}
 			return true;
 		}
+		// 2b. Nothing in reach, but something is on its way. Stand and take it on the shield rather
+		// than walking on and taking it in the back.
+		if (incoming != null) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			if (combat.tickProjectile(minecraft, player, input, incoming) == ActionState.WORKING) {
+				status = Status.FIGHTING;
+				return true;
+			}
+			// No shield to hide behind, so there is nothing to stop for. Carry on and hope.
+			combat.cancel(minecraft, player);
+		}
+
 		// Nothing attacking us — but we may be the ones doing the attacking.
 		if (engageQuarry(minecraft, player)) {
 			return true;

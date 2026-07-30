@@ -4,12 +4,13 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import mcbot.client.action.Threats;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.monster.Enemy;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -67,15 +68,16 @@ final class Surroundings {
 	/**
 	 * What is hostile nearby, nearest first, or that nothing is.
 	 *
-	 * <p>Reported as {@link Enemy} rather than as the narrower {@code Monster} the self-defence code
-	 * fights: this is about what the model should worry about, and a ghast or a slime is a problem
-	 * whether or not the bot would walk up and hit it.</p>
+	 * <p>Asked of {@link Threats#isHostile}, the same question the self-defence code asks, so the
+	 * report and the behaviour cannot disagree — a zombified piglin minding its own business is not
+	 * listed as a threat, because the bot is not going to treat it as one.</p>
 	 *
 	 * <p>Said explicitly when there are none. "No threats" is a fact worth stating — silence would be
 	 * indistinguishable from not having looked.</p>
 	 */
 	static String threats(ClientLevel level, LocalPlayer player) {
-		Map<String, int[]> tally = tally(level, player, entity -> entity instanceof Enemy);
+		Map<String, int[]> tally = tally(level, player,
+				entity -> entity instanceof LivingEntity mob && Threats.isHostile(mob));
 		return tally.isEmpty()
 				? "nothing hostile within " + (int) ENTITY_RANGE + " blocks"
 				: describe(tally);

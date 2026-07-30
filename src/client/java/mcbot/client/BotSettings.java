@@ -903,6 +903,28 @@ public final class BotSettings {
 			"How close a hostile must get before the bot fights back. Near vanilla's 3-block reach, so "
 					+ "it defends itself rather than chasing everything it sees.");
 
+	/**
+	 * Whether the bot answers things thrown at it.
+	 *
+	 * <p>On. Doing nothing about a ghast is not a neutral choice — it is standing in the open being
+	 * shelled — and the two answers available are both cheap: hit what can be hit back, and get behind
+	 * the shield for the rest.</p>
+	 */
+	public static final BooleanSetting GUARD_PROJECTILES = new BooleanSetting("guardProjectiles", true,
+			"Whether the bot deflects fireballs by hitting them and raises its shield against arrows "
+					+ "and tridents. Off means walking on and taking them.");
+
+	/**
+	 * How far off to notice something in flight.
+	 *
+	 * <p>Twenty blocks is roughly two seconds of arrow, which is the reaction time the bot needs to
+	 * turn and get a shield up. Much further and it would be stopping for shots that never had a
+	 * chance of arriving; much nearer and it would be turning to block something already landing.</p>
+	 */
+	public static final DoubleSetting PROJECTILE_WATCH_RANGE = new DoubleSetting(
+			"projectileWatchRange", 20.0, 0.0, 64.0,
+			"How far away an incoming arrow or fireball is noticed and answered.");
+
 	/** Keep this far from a swelling creeper. Trading hits with one is never worth it. */
 	public static final DoubleSetting CREEPER_DANGER_RANGE = new DoubleSetting(
 			"creeperDangerRange", 6.0, 0.0, 32.0,

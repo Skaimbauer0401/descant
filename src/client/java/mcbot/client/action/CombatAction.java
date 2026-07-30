@@ -9,6 +9,7 @@ import mcbot.client.inventory.InventoryManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Monster;
@@ -40,6 +41,20 @@ public final class CombatAction {
 
 	private static final float AIM_TOLERANCE = 20.0f;
 
+	/**
+	 * Ticks between swings at the same projectile.
+	 *
+	 * <p>A deflected fireball stops pointing at us and drops out of the scan on its own, so this is not
+	 * what stops the bot flailing at one — it is what stops it sending an attack packet every tick for
+	 * the two or three ticks that takes. Short enough that a swing the server rejected for range is
+	 * retried almost immediately.</p>
+	 */
+	private static final int SWAT_INTERVAL_TICKS = 3;
+
+	/** The projectile last swung at, and when, so the same one is not hit sixty times a second. */
+	private int lastSwatted = -1;
+	private long lastSwatTick;
+
 	/** Nearest hostile close enough to deal with, or {@code null} if we can walk on. */
 	public static LivingEntity findThreat(Minecraft minecraft, LocalPlayer player) {
 		if (minecraft.level == null) {
@@ -49,8 +64,10 @@ public final class CombatAction {
 		double range = Math.max(BotSettings.COMBAT_ENGAGE_RANGE.get(), BotSettings.CREEPER_DANGER_RANGE.get());
 		AABB box = player.getBoundingBox().inflate(range);
 
+		// Not every Monster is an enemy. The neutral ones are only a threat once they have turned on
+		// somebody — see Threats.isHostile, which is also what the surroundings report reads.
 		List<Monster> hostiles = minecraft.level.getEntitiesOfClass(Monster.class, box,
-				monster -> monster.isAlive() && !monster.isSpectator());
+				monster -> monster.isAlive() && !monster.isSpectator() && Threats.isHostile(monster));
 
 		LivingEntity best = null;
 		double bestDistance = Double.MAX_VALUE;
@@ -133,6 +150,64 @@ public final class CombatAction {
 		player.swing(InteractionHand.MAIN_HAND);
 		player.resetAttackStrengthTicker();
 		return ActionState.WORKING;
+	}
+
+	/**
+	 * Answers something in flight for a tick.
+	 *
+	 * <p>Two answers, and which one it is was decided by {@link Threats} rather than here. A fireball
+	 * is <b>hit</b>: striking one sends it back the way it came, which both stops it and is the
+	 * quickest way to kill the ghast that sent it. An arrow or a trident is <b>blocked</b>: there is no
+	 * return value in swatting one, and a raised shield stops it dead.</p>
+	 *
+	 * <p>The aim snaps rather than easing round. Everywhere else the bot turns gradually because a
+	 * smooth turn is what keeps it on its route — but an arrow crosses twenty blocks in about two
+	 * seconds, and a shield facing the wrong way is a shield doing nothing.</p>
+	 *
+	 * @return {@link ActionState#DONE} when there is nothing left to answer
+	 */
+	public ActionState tickProjectile(Minecraft minecraft, LocalPlayer player, BotInput input,
+			Threats.Incoming incoming) {
+		if (minecraft.gameMode == null || incoming == null || !incoming.projectile().isAlive()) {
+			setBlocking(minecraft, player, false);
+			return ActionState.DONE;
+		}
+		Entity projectile = incoming.projectile();
+
+		Vec3 eye = player.getEyePosition();
+		Vec3 aimPoint = projectile.position().add(0.0, projectile.getBbHeight() * 0.5, 0.0);
+		player.setYRot(Steering.yawTowards(eye, aimPoint));
+		player.setXRot(Steering.pitchTowards(eye, aimPoint));
+
+		// Stand still. Walking sideways out from behind a shield defeats the shield, and a swing at
+		// something moving this fast wants the body still.
+		input.forward(false).backward(false).left(false).right(false).sprint(false);
+
+		if (incoming.answer() == Threats.Answer.SWAT) {
+			// No shield: the main hand has to be free to swing, and holding use with a weapon that has
+			// its own use action would throw it instead.
+			setBlocking(minecraft, player, false);
+			if (!Threats.withinSwing(player, projectile)) {
+				return ActionState.WORKING; // still closing; keep facing it and wait
+			}
+			// Deliberately not waiting for the attack cooldown. A deflection does not care how hard the
+			// hit was, and a fireball does not wait for the strength meter to refill.
+			long now = player.tickCount;
+			if (projectile.getId() != lastSwatted || now - lastSwatTick >= SWAT_INTERVAL_TICKS) {
+				lastSwatted = projectile.getId();
+				lastSwatTick = now;
+				InventoryManager.equipBestWeapon(minecraft, player);
+				minecraft.gameMode.attack(player, projectile);
+				player.swing(InteractionHand.MAIN_HAND);
+			}
+			return ActionState.WORKING;
+		}
+
+		boolean hasShield = player.getOffhandItem().getItem() == Items.SHIELD;
+		boolean mainHandInert = player.getMainHandItem().getUseAnimation() == ItemUseAnimation.NONE;
+		setBlocking(minecraft, player, hasShield && mainHandInert);
+		// Without a shield there is nothing to be gained by standing still and watching it arrive.
+		return hasShield && mainHandInert ? ActionState.WORKING : ActionState.DONE;
 	}
 
 	/**
