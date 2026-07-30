@@ -13,6 +13,9 @@ import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile;
+import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -39,14 +42,15 @@ public final class Threats {
 	/** What to do about something in flight. */
 	public enum Answer {
 		/**
-		 * Hit it. Fireballs, wither skulls and shulker bullets are deflected by being struck — a ghast
-		 * fireball sent back the way it came is both the safest answer and the fastest way to kill the
-		 * ghast, which is why it beats hiding behind a shield.
+		 * Hit it. A ghast's fireball and a shulker bullet are both big enough and slow enough to strike,
+		 * and a fireball sent back the way it came is not merely stopped — it is the fastest way to kill
+		 * the ghast that sent it, which is why it beats hiding behind a shield.
 		 */
 		SWAT,
 		/**
-		 * Get behind the shield. Arrows and tridents cannot be usefully swatted — they are small, fast
-		 * and there is no return value in hitting one — but a raised shield stops them dead.
+		 * Get behind the shield. Arrows, tridents, a blaze's fireballs and wither skulls are all too
+		 * small or too fast to swing at, and there would be no return value in connecting anyway — but a
+		 * raised shield stops every one of them dead.
 		 */
 		BLOCK
 	}
@@ -127,17 +131,29 @@ public final class Threats {
 	/**
 	 * What kind of answer this projectile calls for, or {@code null} for one not worth reacting to.
 	 *
-	 * <p>Deliberately a short list. A snowball, an egg, a fishing float and a firework are all
-	 * projectiles and none of them is worth stopping a journey for — reacting to everything that flies
-	 * would leave the bot standing in a field blocking chickens.</p>
+	 * <p>Named one class at a time rather than by base class, because the base class is a lie here:
+	 * everything a blaze, a ghast, a wither and a breeze shoot shares
+	 * {@link AbstractHurtingProjectile}, and the right answer to those four is different every time.
+	 * An earlier version swatted the lot, which meant the bot standing in the open swinging at blaze
+	 * fireballs it cannot hit while they burned it.</p>
 	 */
 	private static Answer answerFor(Projectile projectile) {
-		if (projectile instanceof AbstractHurtingProjectile || projectile instanceof ShulkerBullet) {
+		if (projectile instanceof LargeFireball || projectile instanceof ShulkerBullet) {
 			return Answer.SWAT;
 		}
-		if (projectile instanceof AbstractArrow) {
+		// A blaze's fireball is a tenth the size of a ghast's and arrives in a burst of three; a wither
+		// skull is not much better. Neither can be batted away by hand, and both are stopped outright by
+		// a shield — as are arrows and tridents, which there was never any point swinging at.
+		if (projectile instanceof SmallFireball || projectile instanceof WitherSkull
+				|| projectile instanceof AbstractArrow) {
 			return Answer.BLOCK;
 		}
+		// Everything else is left alone, and each for its own reason:
+		// - a dragon fireball does no damage itself. What hurts is the cloud of dragon's breath it leaves
+		//   where it lands, and no swing or shield touches that; the only answer is to walk out of it.
+		// - a wind charge deals no damage at all, only knockback, which a shield does not stop either.
+		// - a snowball, an egg, a fishing float and a firework are all projectiles too, and a bot that
+		//   reacted to every one of them would stand in a field blocking chickens.
 		return null;
 	}
 

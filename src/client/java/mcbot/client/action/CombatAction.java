@@ -155,10 +155,11 @@ public final class CombatAction {
 	/**
 	 * Answers something in flight for a tick.
 	 *
-	 * <p>Two answers, and which one it is was decided by {@link Threats} rather than here. A fireball
-	 * is <b>hit</b>: striking one sends it back the way it came, which both stops it and is the
-	 * quickest way to kill the ghast that sent it. An arrow or a trident is <b>blocked</b>: there is no
-	 * return value in swatting one, and a raised shield stops it dead.</p>
+	 * <p>Two answers, and which one it is was decided by {@link Threats} rather than here. A ghast's
+	 * fireball is <b>hit</b>: striking one sends it back the way it came, which both stops it and is
+	 * the quickest way to kill the ghast that sent it. An arrow, a trident, a blaze's fireball or a
+	 * wither skull is <b>blocked</b>: none of them can usefully be swung at, and a raised shield stops
+	 * all of them dead.</p>
 	 *
 	 * <p>The aim snaps rather than easing round. Everywhere else the bot turns gradually because a
 	 * smooth turn is what keeps it on its route — but an arrow crosses twenty blocks in about two

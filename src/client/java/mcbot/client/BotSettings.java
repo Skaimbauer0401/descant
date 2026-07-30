@@ -949,8 +949,9 @@ public final class BotSettings {
 	 * the shield for the rest.</p>
 	 */
 	public static final BooleanSetting GUARD_PROJECTILES = new BooleanSetting("guardProjectiles", true,
-			"Whether the bot deflects fireballs by hitting them and raises its shield against arrows "
-					+ "and tridents. Off means walking on and taking them.");
+			"Whether the bot deflects ghast fireballs by hitting them and raises its shield against "
+					+ "arrows, tridents, blaze fireballs and wither skulls. Off means walking on and "
+					+ "taking them.");
 
 	/**
 	 * How far off to notice something in flight.

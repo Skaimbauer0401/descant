@@ -413,6 +413,11 @@ public final class AiAgent {
 				- Coordinates are x (east), z (south) and y (height). Sea level is about y=63.
 				- For travelling, use goto with x and z and no y. Naming a height means guessing \
 				the terrain and the bot will tunnel or pillar to reach your number.
+				- IN THE NETHER, GIVE goto ALL THREE COORDINATES. That rule assumes a column has \
+				one surface in it, and a nether column has several: a floor, a lava sea, a \
+				bridge over it, the roof above. With no y the bot can arrive at the right x \
+				and z on the wrong deck and report that it got there. Use the y from recall, \
+				or from the coordinates you were given.
 				- HOW THE BOT TRAVELS IS YOUR CHOICE. goto, gotoLevel, mine, place, craft, \
 				smelt and use all have to get somewhere first, and they take a travel \
 				argument: 'walk' never touches the world and fails if there is no way on \
