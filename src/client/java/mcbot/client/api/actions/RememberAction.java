@@ -31,8 +31,8 @@ public final class RememberAction implements Action {
 
 	@Override
 	public String description() {
-		return "Write down where something is, under a name, so it can be returned to later with "
-				+ "'goto place' or looked up with 'recall'. Defaults to the bot's current position; "
+		return "Write down where something is, under a name, so it can be looked up later with "
+				+ "'recall'. Defaults to the bot's current position; "
 				+ "pass x, y and z to record somewhere else. Remembered across restarts and kept per "
 				+ "world. Use it for anything worth finding again — the base, a portal, a mine, a "
 				+ "villager. Naming an existing place again moves it.";
@@ -42,8 +42,8 @@ public final class RememberAction implements Action {
 	public List<Parameter> parameters() {
 		return List.of(
 				Parameter.required("name", ParameterType.STRING,
-						"What to call it: 'base', 'iron mine', 'nether portal'. This is what 'goto' and "
-								+ "'recall' look it up by."),
+						"What to call it: 'base', 'iron mine', 'nether portal'. This is what 'recall' "
+								+ "looks it up by."),
 				Parameter.optional("kind", ParameterType.STRING,
 						"Optionally what sort of place it is — 'base', 'portal', 'fortress' — which "
 								+ "'recall' can then search by. Defaults to the name."),
@@ -78,6 +78,6 @@ public final class RememberAction implements Action {
 
 		return ActionResult.ok((existing == null ? "Remembered " : "Moved ") + place.name()
 				+ " — " + place.x() + ", " + place.y() + ", " + place.z()
-				+ " in " + place.dimension() + ". Go back with goto place='" + place.name() + "'.");
+				+ " in " + place.dimension() + ".");
 	}
 }

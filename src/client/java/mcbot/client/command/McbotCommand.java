@@ -62,7 +62,6 @@ import net.minecraft.resources.Identifier;
  *   /mcbot remember &lt;name&gt;   write this spot down under a name
  *   /mcbot recall [&lt;query&gt;]  list what the bot remembers, nearest first
  *   /mcbot forget &lt;name&gt;     drop one; 'noticed' drops everything it found by itself
- *   /mcbot goto &lt;name&gt;       travel to a remembered place
  *   /mcbot look                    describe the surroundings: where, biome, time, what is nearby
  *   /mcbot craft &lt;item&gt; [count]    make something, at a bench if the recipe needs one
  *   /mcbot smelt &lt;item&gt; [count]    run a furnace: find it, load it, wait, collect
@@ -105,14 +104,7 @@ public final class McbotCommand {
 
 	public void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {
 		dispatcher.register(ClientCommands.literal("mcbot")
-				.then(ClientCommands.literal("goto")
-						.then(coordinates(TravelMode.TRY_WALK))
-						// A remembered name, after the numeric forms so a place called "100" still
-						// parses as a height. Brigadier tries the literal branches in order.
-						.then(ClientCommands.<String>argument("place", StringArgumentType.greedyString())
-								.suggests(McbotCommand::suggestPlaces)
-								.executes(context -> run(context, "goto", Arguments.of(
-										"place", StringArgumentType.getString(context, "place"))))))
+				.then(ClientCommands.literal("goto").then(coordinates(TravelMode.TRY_WALK)))
 				.then(ClientCommands.literal("walk").then(coordinates(TravelMode.WALK)))
 				.then(ClientCommands.literal("dig").then(coordinates(TravelMode.BUILD)))
 				.then(ClientCommands.literal("find")

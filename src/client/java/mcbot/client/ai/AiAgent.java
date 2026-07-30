@@ -492,9 +492,9 @@ public final class AiAgent {
 				ANYTHING that might already be known: the base, a portal, a stronghold, a \
 				fortress. It contains both places somebody named and ones the bot noticed \
 				itself while walking past.
-				- goto place='base' travels to a remembered place by name, which is the whole \
-				point of them. It refuses across dimensions, because the same coordinates in \
-				the nether are somewhere else entirely.
+				- recall gives coordinates; pass those to goto to travel to one. Check the \
+				dimension it lists first — the same coordinates in the nether are somewhere \
+				else entirely, and a remembered overworld spot is not reachable from there.
 				- remember writes one down, defaulting to where the bot is standing. Use it \
 				whenever you arrive somewhere worth finding again, and SAY THAT YOU DID — a \
 				base, a portal, a good mine, a villager worth trading with. A name given by \

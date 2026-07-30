@@ -40,8 +40,8 @@ public final class RecallAction implements Action {
 				+ "'remember' and ones it noticed itself, such as strongholds, fortresses, villages "
 				+ "and portals — nearest first, with coordinates and distances. Pass 'query' to "
 				+ "search by name or kind. Costs nothing and changes nothing, so check here before "
-				+ "setting out to look for something: the bot may already know where it is. To go to "
-				+ "one, pass its name to goto as 'place'.";
+				+ "setting out to look for something: the bot may already know where it is. To travel "
+				+ "to one, read its coordinates off this list and pass them to goto.";
 	}
 
 	@Override
