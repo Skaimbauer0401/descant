@@ -66,7 +66,119 @@ public final class ApiKeys {
 	 * that hands them out is a method that ends up being called from somewhere that prints things.</p>
 	 */
 	public static boolean has(List<String> names) {
-		return find(names) != null;
+		return sourceOf(names) != Source.NONE;
+	}
+
+	// ---------------------------------------------------------------- for the settings screen
+
+	/** Where a key came from, which decides what can be done about it. */
+	public enum Source {
+		/** Nothing set under any of the names. */
+		NONE,
+		/**
+		 * Set in the environment, which wins and which the game cannot change.
+		 *
+		 * <p>Worth distinguishing rather than reporting a flat "found": a key pasted into the screen
+		 * while an environment variable of the same name is set will be saved, ignored, and appear to
+		 * have done nothing — the exact silent no-op this project keeps running into.</p>
+		 */
+		ENVIRONMENT,
+		/** In the keys file, where the screen put it and where the screen can take it away. */
+		FILE
+	}
+
+	/**
+	 * How long an answer from {@link #sourceOf} is reused before the file is read again.
+	 *
+	 * <p>Half a second, because the caller is a screen asking sixty times a second and the answer
+	 * changes about once a session. Without this, hovering the settings screen means a file read per
+	 * frame on the render thread, which is the sort of thing that turns a slow disk into a stutter.</p>
+	 *
+	 * <p>Only this question is cached. {@link #require} still reads fresh every time, because that is
+	 * the guarantee that lets a key pasted into the file work without a restart — and it is asked once
+	 * per network round trip rather than once per frame.</p>
+	 */
+	private static final long SOURCE_CACHE_MILLIS = 500;
+
+	private static List<String> cachedNames;
+	private static Source cachedSource;
+	private static long cachedAt;
+
+	/** Where the key for these names is coming from. Cached briefly; see the constant above. */
+	public static synchronized Source sourceOf(List<String> names) {
+		long now = System.currentTimeMillis();
+		if (names.equals(cachedNames) && now - cachedAt < SOURCE_CACHE_MILLIS) {
+			return cachedSource;
+		}
+		cachedNames = List.copyOf(names);
+		cachedAt = now;
+		cachedSource = lookUpSource(names);
+		return cachedSource;
+	}
+
+	private static Source lookUpSource(List<String> names) {
+		for (String name : names) {
+			if (isSet(System.getenv(name))) {
+				return Source.ENVIRONMENT;
+			}
+		}
+		Properties stored = read();
+		for (String name : names) {
+			if (isSet(stored.getProperty(name))) {
+				return Source.FILE;
+			}
+		}
+		return Source.NONE;
+	}
+
+	/** Drops the cached answer, so a key just written is visible on the very next frame. */
+	private static synchronized void forgetCachedSource() {
+		cachedNames = null;
+	}
+
+	/**
+	 * Saves a key under {@code name}, keeping every other key in the file.
+	 *
+	 * <p>The file is rewritten rather than appended to, so setting the same key twice replaces it
+	 * instead of leaving two lines whose winner depends on which the parser reads last. The standing
+	 * header goes back on each time; comments anyone added by hand do not survive, which is the price
+	 * of not hand-rolling a properties parser to preserve them.</p>
+	 *
+	 * @param value the key, or blank to remove it
+	 * @return whether the file was written
+	 */
+	public static boolean store(String name, String value) {
+		Properties stored = read();
+		if (isSet(value)) {
+			stored.setProperty(name, value.trim());
+		} else {
+			stored.remove(name);
+		}
+		return write(stored);
+	}
+
+	/** Removes every one of these names from the file. Does not touch the environment — it cannot. */
+	public static boolean forget(List<String> names) {
+		Properties stored = read();
+		names.forEach(stored::remove);
+		return write(stored);
+	}
+
+	private static boolean write(Properties keys) {
+		StringBuilder text = new StringBuilder(HEADER);
+		for (String name : keys.stringPropertyNames()) {
+			text.append(name).append('=').append(keys.getProperty(name)).append('\n');
+		}
+
+		Path file = file();
+		try {
+			Files.createDirectories(file.getParent());
+			Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
+			forgetCachedSource();
+			return true;
+		} catch (IOException e) {
+			return false;
+		}
 	}
 
 	/** The first key set under any of these names, environment before file, or {@code null}. */
@@ -126,30 +238,40 @@ public final class ApiKeys {
 				+ created + " — it is read fresh each time, so there is no need to restart. "
 				+ "An environment variable of the same name works too, but on Windows 'setx' only "
 				+ "reaches programs started afterwards, so the file is the simpler route. "
-				+ "'/mcbot set aiProvider local' works offline meanwhile.";
+				+ "'/mcbot set aiProvider ollama' works offline meanwhile.";
 	}
 
-	/** Writes the empty template if there is no file yet. Returns a clause for the message. */
+	/**
+	 * The standing header, written back whenever the file is.
+	 *
+	 * <p>No list of key names in it any more. There are five providers now and the settings screen
+	 * both names the one it wants and takes it, so a menu of commented-out names in a file is a second
+	 * place to keep up to date for the sake of a route nobody needs to use.</p>
+	 */
+	private static final String HEADER = """
+			# API keys for mcbot. One per line, as NAME=value.
+			#
+			# Written by the settings screen (G), which is the easier way in — it names the key the
+			# chosen provider wants and says whether it found one. Editing by hand works too.
+			#
+			# Everything after the '=' is part of the value, so no quotes and no comment on the same
+			# line. Read fresh on every request: a key put here works immediately, with no restart.
+			# An environment variable of the same name wins over this file.
+			#
+			# Anyone holding one of these can spend on your account. Keep the file out of screenshots,
+			# and out of any folder you share or commit.
+
+			""";
+
+	/** Writes the bare template if there is no file yet. Returns a clause for the message. */
 	private static String template(Path file) {
 		if (Files.exists(file)) {
 			return "";
 		}
 		try {
 			Files.createDirectories(file.getParent());
-			Files.writeString(file, """
-					# API keys for mcbot. One per line, as NAME=value.
-					#
-					# Everything after the '=' is part of the value, so no quotes and no comment on the
-					# same line. Read fresh on every request: a key pasted in here works immediately,
-					# with no restart. An environment variable of the same name wins over this file.
-					#
-					# Anyone holding one of these can spend on your account. Keep the file out of
-					# screenshots, and out of any folder you share or commit.
-
-					# Anthropic, from console.anthropic.com — billed per token; Pro does not cover it
-					#ANTHROPIC_API_KEY=
-					""", StandardCharsets.UTF_8);
-			return " (just created, with the names filled in)";
+			Files.writeString(file, HEADER, StandardCharsets.UTF_8);
+			return " (just created)";
 		} catch (IOException e) {
 			// Nothing to do about it: the message still names the right path, and creating the file by
 			// hand works exactly as well.

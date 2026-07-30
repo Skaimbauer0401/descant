@@ -76,8 +76,26 @@ public final class SettingRegistry {
 
 	// ---------------------------------------------------------------- grouping
 
+	/**
+	 * How much of a specialist a setting expects its reader to be.
+	 *
+	 * <p>The line is drawn by what happens when the value is wrong. A {@link #SIMPLE} setting says
+	 * what the bot should do — which model, whether to mine through a base, where to bank the haul —
+	 * and a wrong answer is a preference you disagree with. An {@link #ADVANCED} one is a number
+	 * inside the A* cost function or the movement executor, where a wrong answer is a bot that walks
+	 * into walls, and the only way to pick a right one is to know why the current one is what it
+	 * is.</p>
+	 */
+	public enum Tier {
+		SIMPLE,
+		ADVANCED
+	}
+
 	/** The heading each setting was declared under. */
 	private static final Map<String, String> GROUP_BY_NAME = new LinkedHashMap<>();
+
+	/** The tier of each heading, by heading. */
+	private static final Map<String, Tier> TIER_BY_GROUP = new LinkedHashMap<>();
 
 	private static final String UNGROUPED = "Other";
 
@@ -95,13 +113,25 @@ public final class SettingRegistry {
 	 * {@link #register} and nothing else. A class declaring settings should open with a call to this;
 	 * one that does not gets whatever heading was left behind by the last class that did.</p>
 	 */
-	public static void group(String heading) {
+	public static void group(String heading, Tier tier) {
 		currentGroup = heading;
+		TIER_BY_GROUP.put(heading, tier);
 	}
 
 	/** The heading this setting is filed under. Groups come out in declaration order from {@link #all}. */
 	public static String groupOf(Setting setting) {
 		return GROUP_BY_NAME.getOrDefault(key(setting.name()), UNGROUPED);
+	}
+
+	/**
+	 * Whether this setting is one anybody might reasonably want to change.
+	 *
+	 * <p>Carried by the group rather than by the setting, because the split follows the sections the
+	 * settings were already written in — and a group whose members disagreed about this would be a
+	 * group that had been drawn wrong.</p>
+	 */
+	public static Tier tierOf(Setting setting) {
+		return TIER_BY_GROUP.getOrDefault(groupOf(setting), Tier.ADVANCED);
 	}
 
 	// ---------------------------------------------------------------- remembering

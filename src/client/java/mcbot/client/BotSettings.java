@@ -8,6 +8,7 @@ import mcbot.client.settings.DoubleSetting;
 import mcbot.client.settings.EnumSetting;
 import mcbot.client.settings.IntSetting;
 import mcbot.client.settings.SettingRegistry;
+import mcbot.client.settings.SettingRegistry.Tier;
 import mcbot.client.settings.StringSetting;
 
 /**
@@ -50,7 +51,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- movement costs (ticks)
 
 	static {
-		SettingRegistry.group("Movement costs");
+		SettingRegistry.group("Movement costs", Tier.ADVANCED);
 	}
 
 	/**
@@ -153,7 +154,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- pathfinding limits
 
 	static {
-		SettingRegistry.group("Pathfinding");
+		SettingRegistry.group("Pathfinding", Tier.ADVANCED);
 	}
 
 	/** Hard cap on expanded nodes per search. Prevents unbounded searches in open worlds. */
@@ -202,7 +203,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- survival
 
 	static {
-		SettingRegistry.group("Survival");
+		SettingRegistry.group("Survival", Tier.ADVANCED);
 	}
 
 	/** How closely the player must sit to the middle of a column before pillaring upward. */
@@ -233,7 +234,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- locating
 
 	static {
-		SettingRegistry.group("Locating");
+		SettingRegistry.group("Locating", Tier.ADVANCED);
 	}
 
 	/** How many places {@code locate} reports when it is not told a number. */
@@ -254,7 +255,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- travelling
 
 	static {
-		SettingRegistry.group("Travelling");
+		SettingRegistry.group("Travelling", Tier.SIMPLE);
 	}
 
 	/**
@@ -272,7 +273,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- scaffolding
 
 	static {
-		SettingRegistry.group("Scaffolding");
+		SettingRegistry.group("Scaffolding", Tier.SIMPLE);
 	}
 
 	/** The {@link #SCAFFOLD_BLOCK} value meaning "no preference — spend whatever is spare". */
@@ -301,7 +302,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- display
 
 	static {
-		SettingRegistry.group("Display");
+		SettingRegistry.group("Display", Tier.SIMPLE);
 	}
 
 	/** Whether the planned route is drawn in the world. */
@@ -316,7 +317,7 @@ public final class BotSettings {
 	// which is the whole reason to have both.
 
 	static {
-		SettingRegistry.group("The model");
+		SettingRegistry.group("The model", Tier.SIMPLE);
 	}
 
 	/**
@@ -325,11 +326,12 @@ public final class BotSettings {
 	 * <p>It has to support tool calling — Ollama will refuse outright otherwise, which rules out
 	 * several popular small models including the Gemma family.</p>
 	 */
-	public static final StringSetting AI_MODEL = new StringSetting("aiModel", "gemma4:12b",
+	public static final StringSetting AI_OLLAMA_MODEL = new StringSetting(
+			"aiOllamaModel", "gemma4:12b",
 			"an installed, tool-capable Ollama model",
-			"The local model that drives the bot. Must support tool calling. gemma4:12b picks actions "
-					+ "correctly and runs entirely on this machine; qwen3:14b is stronger if you have "
-					+ "the memory for it.");
+			"The local model that drives the bot, used when aiProvider is 'ollama'. Must support tool "
+					+ "calling. gemma4:12b picks actions correctly and runs entirely on this machine; "
+					+ "qwen3:14b is stronger if you have the memory for it.");
 
 	/**
 	 * The cloud model.
@@ -364,21 +366,58 @@ public final class BotSettings {
 					+ "is well suited to picking actions; claude-sonnet-4-5 is stronger and dearer.");
 
 	/**
+	 * OpenAI's model id.
+	 *
+	 * <p>A conservative default rather than the newest thing. Model ids at every hosted provider churn
+	 * faster than a mod gets recompiled, so what is written here is only a starting point that is
+	 * likely to still exist — the settings screen asks the provider for its actual list the moment the
+	 * provider is selected, and picking from that is the intended route.</p>
+	 */
+	public static final StringSetting AI_CHATGPT_MODEL = new StringSetting(
+			"aiChatgptModel", "gpt-4.1-mini",
+			"an OpenAI model id",
+			"Which OpenAI model to use when aiProvider is 'chatgpt'. The mini tier is well suited to "
+					+ "picking actions and far cheaper. The settings screen lists what your key can "
+					+ "actually reach, which is the list that matters.");
+
+	/**
+	 * Qwen's model id, as served by Alibaba's DashScope.
+	 *
+	 * <p>{@code qwen-plus} rather than a dated snapshot: it is an alias that keeps pointing at a
+	 * current model, which is the closest thing to a default that does not go stale.</p>
+	 */
+	public static final StringSetting AI_QWEN_MODEL = new StringSetting(
+			"aiQwenModel", "qwen-plus",
+			"a DashScope model id",
+			"Which Qwen model to use when aiProvider is 'qwen'. qwen-plus is an alias that follows a "
+					+ "current model rather than a fixed snapshot. The settings screen lists what your "
+					+ "key can actually reach.");
+
+	/**
+	 * Kimi's model id, as served by Moonshot.
+	 *
+	 * <p>{@code moonshot-v1-8k} for the same reason as {@code qwen-plus} — a long-lived stable name
+	 * rather than a preview id that will be withdrawn.</p>
+	 */
+	public static final StringSetting AI_KIMI_MODEL = new StringSetting(
+			"aiKimiModel", "moonshot-v1-8k",
+			"a Moonshot model id",
+			"Which Kimi model to use when aiProvider is 'kimi'. moonshot-v1-8k is the long-lived stable "
+					+ "name; the K2 models are stronger and are listed by the settings screen once a key "
+					+ "is in place.");
+
+	/**
 	 * Where the model comes from.
 	 *
-	 * <p>Defaults to {@code local}: the one that costs nothing, needs no account and sends nothing
+	 * <p>Defaults to {@code ollama}: the one that costs nothing, needs no account and sends nothing
 	 * anywhere. A default that quietly bills someone would be the wrong way round, however cheap.</p>
 	 */
 	public static final EnumSetting<AiProvider> AI_PROVIDER = new EnumSetting<>(
-			"aiProvider", AiProvider.LOCAL,
-			"Which model drives the bot: a local Ollama model, an Ollama cloud model, or Anthropic's "
-					+ "API. 'claude' needs an ANTHROPIC_API_KEY and is billed per token — a Claude Pro "
-					+ "subscription does not cover API use.");
-
-	/** Where the Ollama daemon is. Cloud models go through it too. */
-	public static final StringSetting AI_HOST = new StringSetting(
-			"aiHost", "http://localhost:11434", "a base URL",
-			"Where Ollama is listening. Cloud models are proxied through this same daemon.");
+			"aiProvider", AiProvider.OLLAMA,
+			"Which model drives the bot. 'ollama' runs one on this machine, free and private; 'cloud' "
+					+ "is an Ollama cloud model proxied through the same daemon. 'claude', 'chatgpt', "
+					+ "'qwen' and 'kimi' are hosted APIs, each billed per token and each needing its own "
+					+ "key — see the settings screen, which can take one and says whether it found it.");
 
 	/**
 	 * How many rounds of thinking the model gets before the run is called off.
@@ -402,6 +441,30 @@ public final class BotSettings {
 					+ "'yes, do that' has something to refer to. 0 turns it off. Lines older than ten "
 					+ "minutes are never included.");
 
+	/**
+	 * Model temperature.
+	 *
+	 * <p>Low. Picking the right function from a list is not a task that benefits from invention, and
+	 * a small model at default heat will cheerfully call something that does not exist.</p>
+	 */
+	public static final DoubleSetting AI_TEMPERATURE = new DoubleSetting("aiTemperature", 0.2,
+			0.0, 2.0,
+			"How inventive the model is. Low is right for choosing between functions.");
+
+	// ---------------------------------------------------------------- talking to it
+	//
+	// Where the request goes and how long it is given. Separated from the choice of model
+	// because these are the numbers nobody should have to touch to get started.
+
+	static {
+		SettingRegistry.group("Connection", Tier.ADVANCED);
+	}
+
+	/** Where the Ollama daemon is. Cloud models go through it too. */
+	public static final StringSetting AI_HOST = new StringSetting(
+			"aiHost", "http://localhost:11434", "a base URL",
+			"Where Ollama is listening. Cloud models are proxied through this same daemon.");
+
 	/** How long to wait for the model to reply. Cloud round-trips on a big model are not quick. */
 	public static final IntSetting AI_REQUEST_TIMEOUT = new IntSetting(
 			"aiRequestTimeout", 180, 5, 900,
@@ -418,20 +481,10 @@ public final class BotSettings {
 			"Seconds to let one action run before reporting back to the model. The bot carries on "
 					+ "either way; this only decides when the model hears about it.");
 
-	/**
-	 * Model temperature.
-	 *
-	 * <p>Low. Picking the right function from a list is not a task that benefits from invention, and
-	 * a small model at default heat will cheerfully call something that does not exist.</p>
-	 */
-	public static final DoubleSetting AI_TEMPERATURE = new DoubleSetting("aiTemperature", 0.2,
-			0.0, 2.0,
-			"How inventive the model is. Low is right for choosing between functions.");
-
 	// ---------------------------------------------------------------- protecting and wear
 
 	static {
-		SettingRegistry.group("Protecting and wear");
+		SettingRegistry.group("Protecting and wear", Tier.SIMPLE);
 	}
 
 	/**
@@ -461,7 +514,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- banking the haul
 
 	static {
-		SettingRegistry.group("Banking the haul");
+		SettingRegistry.group("Banking the haul", Tier.SIMPLE);
 	}
 
 	/**
@@ -499,7 +552,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- searching and collecting
 
 	static {
-		SettingRegistry.group("Searching and collecting");
+		SettingRegistry.group("Searching and collecting", Tier.ADVANCED);
 	}
 
 	/** Radius searched for dropped items when the bot runs out of something it needs. */
@@ -556,7 +609,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- execution
 
 	static {
-		SettingRegistry.group("Execution");
+		SettingRegistry.group("Execution", Tier.ADVANCED);
 	}
 
 	/**
@@ -632,7 +685,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- parkour
 
 	static {
-		SettingRegistry.group("Parkour");
+		SettingRegistry.group("Parkour", Tier.ADVANCED);
 	}
 
 	/**
@@ -663,7 +716,7 @@ public final class BotSettings {
 	// ---------------------------------------------------------------- route tracking
 
 	static {
-		SettingRegistry.group("Route tracking");
+		SettingRegistry.group("Route tracking", Tier.ADVANCED);
 	}
 
 	/**
@@ -750,7 +803,7 @@ public final class BotSettings {
 	// finish the route.
 
 	static {
-		SettingRegistry.group("Combat and eating");
+		SettingRegistry.group("Combat and eating", Tier.ADVANCED);
 	}
 
 	/** Interaction reach. Vanilla survival is 4.5; stay under it for block break/place. */

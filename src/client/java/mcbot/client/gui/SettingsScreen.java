@@ -16,28 +16,32 @@ import net.minecraft.network.chat.Component;
 /**
  * The settings screen: everything {@code /mcbot set} can change, with somewhere to click instead.
  *
- * <p>Not a replacement for the command — the command is still what a model uses, and still the
- * quicker way to change one setting you already know the name of. What this adds is the other half:
- * seeing what the settings <em>are</em>. There are getting on for eighty of them, each with a
- * sentence explaining it and a range it accepts, and none of that is discoverable by typing
- * {@code /mcbot set} and reading eighty lines of chat.</p>
+ * <p>Two tabs, because the settings are two different kinds of thing. <b>Simple</b> is what the bot
+ * should do — which model drives it, whether it may mine through a base, where it banks the haul —
+ * and a wrong answer there is a preference you disagree with. <b>Advanced</b> is the tuning: the
+ * numbers inside the A* cost function and the movement executor, where a wrong answer is a bot that
+ * walks into walls and the only way to pick a right one is to know why the current one is what it is.
+ * Putting {@code sprintCost} on the first page somebody opens is how a working bot gets broken by
+ * curiosity.</p>
  *
- * <p>Two things here exist because of a specific afternoon lost to them, and both are about the
- * model: a model setting the chosen provider does not read is greyed out rather than looking
- * ordinary, and the line above the buttons says which model will actually be asked and whether the
- * key for it was found. Both are questions the chat commands could only answer if you knew to ask.</p>
+ * <p>Two things on the simple tab exist because of specific afternoons lost to them, both about the
+ * model. There is <b>one model row, pointed at whichever provider is chosen</b>, so the six model
+ * settings cannot be confused for one another. And the line above the buttons says which model will
+ * actually be asked and whether its key was found — a question the chat commands could only answer if
+ * you already knew to ask it.</p>
  *
  * <p>Deliberately not a pause screen. The bot keeps walking, mining and thinking while this is open,
  * which is what makes it possible to nudge a cost and watch the route change rather than guessing.</p>
  */
 public final class SettingsScreen extends Screen {
 
-	/** Title, then the search box. */
-	private static final int HEADER = 56;
+	/** Title, tabs, and the search box on the tab that has one. */
+	private static final int HEADER = 74;
 	/** The count line, the status line, then the buttons. */
 	private static final int FOOTER = 60;
 
 	private static final int BUTTON_WIDTH = 150;
+	private static final int TAB_WIDTH = 100;
 	private static final int SEARCH_WIDTH = 300;
 
 	private static final int DIM = 0xFFA0A0A0;
@@ -47,12 +51,16 @@ public final class SettingsScreen extends Screen {
 	private final Screen parent;
 
 	/**
-	 * Survives the rebuild that a window resize causes, so resizing does not silently undo a search
-	 * and leave the list looking like it lost half the settings.
+	 * Both survive the rebuild a window resize causes, so resizing does not silently drop a search or
+	 * throw somebody back onto a tab they had left.
 	 */
+	private boolean advanced;
 	private String query = "";
 
 	private SettingsList list;
+	private Button simpleTab;
+	private Button advancedTab;
+	private EditBox search;
 	private Button resetAll;
 	private boolean resetArmed;
 	private int showing;
@@ -64,36 +72,60 @@ public final class SettingsScreen extends Screen {
 
 	@Override
 	protected void init() {
-		EditBox search = new EditBox(font, (width - SEARCH_WIDTH) / 2, 30, SEARCH_WIDTH, 20,
-				Component.literal("Search"));
+		simpleTab = addRenderableWidget(Button.builder(Component.literal("Simple"), button -> show(false))
+				.bounds(width / 2 - TAB_WIDTH - 2, 26, TAB_WIDTH, 20)
+				.build());
+		advancedTab = addRenderableWidget(
+				Button.builder(Component.literal("Advanced"), button -> show(true))
+						.bounds(width / 2 + 2, 26, TAB_WIDTH, 20)
+						.build());
+		advancedTab.setTooltip(Tooltip.create(Component.literal(
+				"Every setting there is, including the ones that will break the bot if guessed at.")));
+
+		search = addRenderableWidget(new EditBox(font, (width - SEARCH_WIDTH) / 2, 50, SEARCH_WIDTH, 20,
+				Component.literal("Search")));
 		search.setHint(Component.literal("Search by name or by what it does"));
 		search.setMaxLength(64);
 		search.setValue(query);
 		search.setResponder(text -> {
 			query = text;
-			showing = list.filter(text);
+			showing = list.showAll(text);
 		});
-		addRenderableWidget(search);
 
-		list = new SettingsList(minecraft, width, height - HEADER - FOOTER, HEADER);
-		addRenderableWidget(list);
-		showing = list.filter(query);
+		list = addRenderableWidget(new SettingsList(minecraft, width, height - HEADER - FOOTER, HEADER));
 
-		resetAll = Button.builder(Component.literal("Reset all"), button -> resetAll())
-				.bounds(width / 2 - BUTTON_WIDTH - 2, height - 28, BUTTON_WIDTH, 20)
-				.build();
+		resetAll = addRenderableWidget(
+				Button.builder(Component.literal("Reset all"), button -> resetAll())
+						.bounds(width / 2 - BUTTON_WIDTH - 2, height - 28, BUTTON_WIDTH, 20)
+						.build());
 		resetAll.setTooltip(Tooltip.create(Component.literal(
 				"Puts every setting back to the value it shipped with, and empties "
-						+ SettingRegistry.file() + ".")));
-		addRenderableWidget(resetAll);
+						+ SettingRegistry.file() + ". Does not touch your API keys.")));
 
 		addRenderableWidget(Button.builder(Component.literal("Done"), button -> onClose())
 				.bounds(width / 2 + 2, height - 28, BUTTON_WIDTH, 20)
 				.build());
 
-		// Focused on open, so a screen with eighty rows on it can be narrowed to the one you came for
-		// without reaching for the mouse first.
-		setInitialFocus(search);
+		show(advanced);
+	}
+
+	/**
+	 * Switches tab.
+	 *
+	 * <p>The search box belongs to the advanced tab alone. On the simple page there are a dozen rows
+	 * and the AI panel at the top of them, which is less to read than the search box explaining
+	 * itself.</p>
+	 */
+	private void show(boolean showAdvanced) {
+		advanced = showAdvanced;
+		simpleTab.active = advanced;
+		advancedTab.active = !advanced;
+		search.visible = advanced;
+		search.setFocused(false);
+		showing = advanced ? list.showAll(query) : list.showSimple();
+		if (advanced) {
+			setInitialFocus(search);
+		}
 	}
 
 	/**
@@ -103,6 +135,9 @@ public final class SettingsScreen extends Screen {
 	 * made and there is no undo, which is too much to hang on one misplaced click — but it is also not
 	 * important enough to be worth a whole screen of its own. Moving the mouse off the button puts the
 	 * question away again, so an armed one is never left lying in wait.</p>
+	 *
+	 * <p>Settings only. API keys live in a different file and are not "settings that shipped with a
+	 * default" — losing one to a button labelled "reset" would be a genuinely bad surprise.</p>
 	 */
 	private void resetAll() {
 		if (!resetArmed) {
@@ -114,7 +149,7 @@ public final class SettingsScreen extends Screen {
 		disarm();
 		// Rebuilt rather than left alone: every row is holding a value that is no longer the one the
 		// setting has, and a control showing a stale value is worse than no control at all.
-		showing = list.filter(query);
+		show(advanced);
 	}
 
 	private void disarm() {
@@ -131,16 +166,17 @@ public final class SettingsScreen extends Screen {
 		if (resetArmed && !resetAll.isMouseOver(mouseX, mouseY)) {
 			disarm();
 		}
-		graphics.centeredText(font, title, width / 2, 14, 0xFFFFFFFF);
+		graphics.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
 		graphics.centeredText(font, counts(), width / 2, height - 54, DIM);
-		graphics.centeredText(font, model(), width / 2, height - 42,
-				keyMissing() ? WARN : DIM);
+		graphics.centeredText(font, model(), width / 2, height - 42, keyMissing() ? WARN : DIM);
 	}
 
 	private Component counts() {
 		int changed = SettingRegistry.modified().size();
 		int total = SettingRegistry.all().size();
-		String shown = showing == total ? total + " settings" : showing + " of " + total + " showing";
+		String shown = advanced && showing != total
+				? showing + " of " + total + " showing"
+				: total + " settings";
 		return Component.literal(shown + " · "
 				+ (changed == 0 ? "none changed" : changed + " changed, saved to config/"
 						+ SettingRegistry.file().getFileName()));
@@ -150,23 +186,20 @@ public final class SettingsScreen extends Screen {
 	 * Which model is actually going to be asked, and whether it can be.
 	 *
 	 * <p>Assembled from the provider rather than from any one setting, because "which model" is a
-	 * two-part answer — the provider picks which of the four model settings counts — and getting that
+	 * two-part answer — the provider decides which of the six model settings counts — and getting that
 	 * wrong is silent everywhere else.</p>
 	 */
 	private Component model() {
 		AiProvider provider = BotSettings.AI_PROVIDER.get();
 		StringBuilder text = new StringBuilder("Asking ")
-				.append(provider.key())
+				.append(provider.label())
 				.append(": ")
-				.append(provider.modelSetting().name())
-				.append(" = ")
 				.append(provider.modelSetting().get());
 
 		List<String> keys = provider.keyNames();
 		if (!keys.isEmpty()) {
 			text.append(keyMissing()
-					? " · no " + keys.getFirst() + " found — put one in config/"
-							+ ApiKeys.file().getFileName()
+					? " · no " + keys.getFirst() + " yet — paste one above"
 					: " · " + keys.getFirst() + " found");
 		}
 		return Component.literal(text.toString());
@@ -191,6 +224,9 @@ public final class SettingsScreen extends Screen {
 
 	@Override
 	public void onClose() {
+		// A key pasted and then closed with Escape never loses focus, so it would never have been
+		// saved. Losing a key that was visibly typed in is the worst outcome this screen has.
+		list.commit();
 		minecraft.gui.setScreen(parent);
 	}
 }

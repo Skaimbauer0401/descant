@@ -50,7 +50,7 @@ public final class OllamaProvider implements LlmProvider {
 
 	/** Whichever of the two models is currently selected. */
 	private static String model() {
-		return cloud() ? BotSettings.AI_CLOUD_MODEL.get() : BotSettings.AI_MODEL.get();
+		return cloud() ? BotSettings.AI_CLOUD_MODEL.get() : BotSettings.AI_OLLAMA_MODEL.get();
 	}
 
 	@Override
@@ -265,7 +265,7 @@ public final class OllamaProvider implements LlmProvider {
 			// Hit for real while testing: the free tier returns 429 with "session usage limit", which
 			// matches none of the words one would think to look for.
 			return "Out of Ollama cloud allowance for " + model() + " — it resets after a while. "
-					+ "Switch to the local model meanwhile with '/mcbot set aiProvider local'.";
+					+ "Switch to the local model meanwhile with '/mcbot set aiProvider ollama'.";
 		}
 		return "Ollama returned HTTP " + status + ": " + brief(body);
 	}

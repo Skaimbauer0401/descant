@@ -43,14 +43,6 @@ public final class ClaudeProvider implements LlmProvider {
 	private static final String API_VERSION = "2023-06-01";
 
 	/**
-	 * The names the key goes by, in the environment or the keys file, best first.
-	 *
-	 * <p>Read by {@link AiProvider#keyNames()} as well as here, so that whatever asks "is this
-	 * provider usable?" and whatever actually uses it are looking at the same list.</p>
-	 */
-	static final List<String> KEY_NAMES = List.of("ANTHROPIC_API_KEY");
-
-	/**
 	 * Ceiling on one reply.
 	 *
 	 * <p>Generous for what is being asked. A turn here is a sentence and a function call, so this is
@@ -68,12 +60,17 @@ public final class ClaudeProvider implements LlmProvider {
 		return "claude " + BotSettings.AI_CLAUDE_MODEL.get();
 	}
 
-	/** The API key. See {@link ApiKeys} for where it is looked for and why never in a setting. */
+	/**
+	 * The API key. See {@link ApiKeys} for where it is looked for and why never in a setting.
+	 *
+	 * <p>The name it goes by and the sentence explaining where to get one both live on
+	 * {@link AiProvider}, so that whatever asks "is this provider usable?" and whatever actually uses
+	 * it are reading the same thing. Two copies of a variable name is how the two of them come to
+	 * disagree.</p>
+	 */
 	private static String apiKey() throws IOException {
-		return ApiKeys.require("Claude",
-				"Create one at console.anthropic.com — note this is the paid API, billed per token, "
-						+ "and a Claude Pro subscription does not cover it.",
-				KEY_NAMES);
+		return ApiKeys.require(AiProvider.CLAUDE.label(), AiProvider.CLAUDE.keyHelp(),
+				AiProvider.CLAUDE.keyNames());
 	}
 
 	@Override
@@ -157,7 +154,7 @@ public final class ClaudeProvider implements LlmProvider {
 				response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 			} catch (ConnectException | UnknownHostException e) {
 				throw new IOException("Can't reach the Anthropic API — check the internet connection. "
-						+ "'/mcbot set aiProvider local' runs offline.");
+						+ "'/mcbot set aiProvider ollama' runs offline.");
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 				throw new IOException("Interrupted while waiting for Claude.");
@@ -291,7 +288,7 @@ public final class ClaudeProvider implements LlmProvider {
 		String model = BotSettings.AI_CLAUDE_MODEL.get();
 
 		if (status == 401 || lower.contains("authentication_error")) {
-			return "Anthropic rejected the API key. Check the " + KEY_NAMES.getFirst() + " in "
+			return "Anthropic rejected the API key. Check the " + AiProvider.CLAUDE.keyNames().getFirst() + " in "
 					+ ApiKeys.file() + " (or in the environment) holds a current key from "
 					+ "console.anthropic.com — a Claude Pro login is a different thing and will not "
 					+ "work here.";
@@ -307,11 +304,11 @@ public final class ClaudeProvider implements LlmProvider {
 		if (status == 400 && lower.contains("credit balance")) {
 			return "The Anthropic account is out of credit. Top it up at console.anthropic.com — the "
 					+ "API is billed separately from a Pro or Max subscription and is not included in "
-					+ "one. '/mcbot set aiProvider local' works offline meanwhile.";
+					+ "one. '/mcbot set aiProvider ollama' works offline meanwhile.";
 		}
 		if (status == 429 || lower.contains("rate_limit_error")) {
 			return "Rate-limited by Anthropic. Wait a moment and try again, or switch with "
-					+ "'/mcbot set aiProvider local'.";
+					+ "'/mcbot set aiProvider ollama'.";
 		}
 		if (status == 529 || lower.contains("overloaded_error")) {
 			return "Anthropic is overloaded right now. Try again shortly.";
