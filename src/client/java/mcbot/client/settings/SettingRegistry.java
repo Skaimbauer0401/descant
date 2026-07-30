@@ -44,6 +44,7 @@ public final class SettingRegistry {
 			// half the settings changes made later.
 			throw new IllegalStateException("Two settings are both called '" + setting.name() + "'.");
 		}
+		GROUP_BY_NAME.put(key(setting.name()), currentGroup);
 	}
 
 	/** The setting with this name, or {@code null}. Case-insensitive. */
@@ -71,6 +72,36 @@ public final class SettingRegistry {
 
 	private static String key(String name) {
 		return name.toLowerCase(Locale.ROOT);
+	}
+
+	// ---------------------------------------------------------------- grouping
+
+	/** The heading each setting was declared under. */
+	private static final Map<String, String> GROUP_BY_NAME = new LinkedHashMap<>();
+
+	private static final String UNGROUPED = "Other";
+
+	private static String currentGroup = UNGROUPED;
+
+	/**
+	 * Files every setting declared after this call under {@code heading}.
+	 *
+	 * <p>A marker rather than a constructor argument, because the settings are already written in
+	 * sections and the sections already have headings — as comments. This turns those comments into
+	 * something the settings screen can read, at the cost of one line per section rather than one
+	 * argument per setting.</p>
+	 *
+	 * <p>Only meaningful while a class of settings is initialising, since it is read by
+	 * {@link #register} and nothing else. A class declaring settings should open with a call to this;
+	 * one that does not gets whatever heading was left behind by the last class that did.</p>
+	 */
+	public static void group(String heading) {
+		currentGroup = heading;
+	}
+
+	/** The heading this setting is filed under. Groups come out in declaration order from {@link #all}. */
+	public static String groupOf(Setting setting) {
+		return GROUP_BY_NAME.getOrDefault(key(setting.name()), UNGROUPED);
 	}
 
 	// ---------------------------------------------------------------- remembering
@@ -117,6 +148,20 @@ public final class SettingRegistry {
 				// sensible reading of a value the setting itself refuses.
 			}
 		}
+	}
+
+	/**
+	 * Puts every setting back to the value it shipped with, and forgets the ones that were changed.
+	 *
+	 * <p>Saving afterwards rather than letting each reset save for itself: eighty writes of a file that
+	 * is shrinking by one line each time is eighty chances to leave it half-written, and the only state
+	 * anyone cares about is the one at the end.</p>
+	 *
+	 * @return whether the file was written
+	 */
+	public static boolean resetAll() {
+		BY_NAME.values().forEach(Setting::reset);
+		return save();
 	}
 
 	/**

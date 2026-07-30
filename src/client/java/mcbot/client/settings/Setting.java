@@ -1,5 +1,7 @@
 package mcbot.client.settings;
 
+import java.util.List;
+
 /**
  * One knob that can be changed while the game is running.
  *
@@ -43,6 +45,19 @@ public abstract class Setting {
 	/** Which values are accepted, in words — a range, or the list of allowed names. */
 	public abstract String domain();
 
+	/**
+	 * The accepted values, when there are few enough to name them all.
+	 *
+	 * <p>Empty for a number or a piece of free text, where there is nothing to enumerate. Whoever is
+	 * offering a choice — the settings screen with a cycling button, tab completion with a suggestion
+	 * list — needs the values themselves rather than the sentence {@link #domain()} wraps them in, and
+	 * picking them back out of that sentence is the sort of parsing that works until the wording
+	 * changes.</p>
+	 */
+	public List<String> options() {
+		return List.of();
+	}
+
 	/** The current value, formatted for display. */
 	public abstract String asString();
 
@@ -75,8 +90,22 @@ public abstract class Setting {
 	/** Whether the setting still holds the value it shipped with. */
 	public abstract boolean isDefault();
 
-	/** Puts the shipped value back. */
+	/** Puts the shipped value back. Changes the running game only — see {@link #restore}. */
 	public abstract void reset();
+
+	/**
+	 * Puts the shipped value back and remembers that.
+	 *
+	 * <p>The counterpart to {@link #change}, and the door a deliberate reset should use for the same
+	 * reason: {@link #reset} on its own leaves the saved file still holding the old value, so the
+	 * setting comes back at the next restart.</p>
+	 *
+	 * @return whether it was written to disk
+	 */
+	public final boolean restore() {
+		reset();
+		return SettingRegistry.save();
+	}
 
 	@Override
 	public String toString() {

@@ -42,8 +42,13 @@ public final class ClaudeProvider implements LlmProvider {
 	/** The API version this code is written against. Anthropic requires it on every request. */
 	private static final String API_VERSION = "2023-06-01";
 
-	/** The name the key goes by, in the environment or the keys file. */
-	private static final String KEY_VARIABLE = "ANTHROPIC_API_KEY";
+	/**
+	 * The names the key goes by, in the environment or the keys file, best first.
+	 *
+	 * <p>Read by {@link AiProvider#keyNames()} as well as here, so that whatever asks "is this
+	 * provider usable?" and whatever actually uses it are looking at the same list.</p>
+	 */
+	static final List<String> KEY_NAMES = List.of("ANTHROPIC_API_KEY");
 
 	/**
 	 * Ceiling on one reply.
@@ -68,7 +73,7 @@ public final class ClaudeProvider implements LlmProvider {
 		return ApiKeys.require("Claude",
 				"Create one at console.anthropic.com — note this is the paid API, billed per token, "
 						+ "and a Claude Pro subscription does not cover it.",
-				KEY_VARIABLE);
+				KEY_NAMES);
 	}
 
 	@Override
@@ -286,7 +291,7 @@ public final class ClaudeProvider implements LlmProvider {
 		String model = BotSettings.AI_CLAUDE_MODEL.get();
 
 		if (status == 401 || lower.contains("authentication_error")) {
-			return "Anthropic rejected the API key. Check the " + KEY_VARIABLE + " in "
+			return "Anthropic rejected the API key. Check the " + KEY_NAMES.getFirst() + " in "
 					+ ApiKeys.file() + " (or in the environment) holds a current key from "
 					+ "console.anthropic.com — a Claude Pro login is a different thing and will not "
 					+ "work here.";

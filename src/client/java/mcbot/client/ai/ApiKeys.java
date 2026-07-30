@@ -5,6 +5,7 @@ import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Properties;
 
 import net.minecraft.client.Minecraft;
@@ -48,7 +49,28 @@ public final class ApiKeys {
 	 *                some providers read more than one, and someone who already has one set should not
 	 *                have to discover which this mod happens to prefer
 	 */
-	public static String require(String service, String help, String... names) throws IOException {
+	public static String require(String service, String help, List<String> names) throws IOException {
+		String key = find(names);
+		if (key == null) {
+			throw new IOException(complaint(service, help, names.getFirst()));
+		}
+		return key;
+	}
+
+	/**
+	 * Whether a key is available under any of these names.
+	 *
+	 * <p>For telling someone their chosen provider will not work <em>before</em> they ask it to do
+	 * something — the settings screen does this next to the provider it belongs to. Deliberately gives
+	 * back a yes or no rather than the key: nothing outside this class needs to hold one, and a method
+	 * that hands them out is a method that ends up being called from somewhere that prints things.</p>
+	 */
+	public static boolean has(List<String> names) {
+		return find(names) != null;
+	}
+
+	/** The first key set under any of these names, environment before file, or {@code null}. */
+	private static String find(List<String> names) {
 		for (String name : names) {
 			String found = System.getenv(name);
 			if (isSet(found)) {
@@ -65,8 +87,7 @@ public final class ApiKeys {
 				return found.trim();
 			}
 		}
-
-		throw new IOException(complaint(service, help, names[0]));
+		return null;
 	}
 
 	private static boolean isSet(String value) {

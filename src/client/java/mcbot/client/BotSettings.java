@@ -7,6 +7,7 @@ import mcbot.client.settings.BooleanSetting;
 import mcbot.client.settings.DoubleSetting;
 import mcbot.client.settings.EnumSetting;
 import mcbot.client.settings.IntSetting;
+import mcbot.client.settings.SettingRegistry;
 import mcbot.client.settings.StringSetting;
 
 /**
@@ -47,6 +48,10 @@ public final class BotSettings {
 
 	// ================================================================ settings
 	// ---------------------------------------------------------------- movement costs (ticks)
+
+	static {
+		SettingRegistry.group("Movement costs");
+	}
 
 	/**
 	 * Time to cross one block while sprinting. Also the A* heuristic scale.
@@ -147,6 +152,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- pathfinding limits
 
+	static {
+		SettingRegistry.group("Pathfinding");
+	}
+
 	/** Hard cap on expanded nodes per search. Prevents unbounded searches in open worlds. */
 	public static final IntSetting MAX_NODES = new IntSetting("maxNodes", 20_000, 100, 5_000_000,
 			"Most nodes one search may expand before giving up on reaching the goal in one go.");
@@ -192,6 +201,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- survival
 
+	static {
+		SettingRegistry.group("Survival");
+	}
+
 	/** How closely the player must sit to the middle of a column before pillaring upward. */
 	public static final DoubleSetting PILLAR_CENTRE_TOLERANCE = new DoubleSetting(
 			"pillarCentreTolerance", 0.18,
@@ -219,6 +232,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- locating
 
+	static {
+		SettingRegistry.group("Locating");
+	}
+
 	/** How many places {@code locate} reports when it is not told a number. */
 	public static final IntSetting LOCATE_COUNT = new IntSetting("locateCount", 5, 1, 30,
 			"How many places 'locate' reports by default.");
@@ -236,6 +253,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- travelling
 
+	static {
+		SettingRegistry.group("Travelling");
+	}
+
 	/**
 	 * How much of the world a journey may rearrange, when the caller does not say.
 	 *
@@ -249,6 +270,10 @@ public final class BotSettings {
 					+ "or try walking and only dig if there is no way on foot.");
 
 	// ---------------------------------------------------------------- scaffolding
+
+	static {
+		SettingRegistry.group("Scaffolding");
+	}
 
 	/** The {@link #SCAFFOLD_BLOCK} value meaning "no preference — spend whatever is spare". */
 	public static final String ANY_SCAFFOLD = "any";
@@ -275,6 +300,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- display
 
+	static {
+		SettingRegistry.group("Display");
+	}
+
 	/** Whether the planned route is drawn in the world. */
 	public static final BooleanSetting SHOW_PATH = new BooleanSetting("showPath", true,
 			"Whether the planned route is drawn in the world.");
@@ -285,6 +314,10 @@ public final class BotSettings {
 	// the same local daemon, so the only difference that reaches the code is the model name. Keeping
 	// both names side by side and switching with one flag makes them easy to compare on one task,
 	// which is the whole reason to have both.
+
+	static {
+		SettingRegistry.group("The model");
+	}
 
 	/**
 	 * The local model.
@@ -385,30 +418,6 @@ public final class BotSettings {
 					+ "'yes, do that' has something to refer to. 0 turns it off. Lines older than ten "
 					+ "minutes are never included.");
 
-	/**
-	 * Whether the bot mines its way through things people built.
-	 *
-	 * <p>On, because the failure it prevents is not recoverable. A route through a base ends with the
-	 * chest gone and its contents on the floor, or already despawned; a route around it costs a few
-	 * seconds. Those are not the same size of mistake, so the default is not a close call.</p>
-	 *
-	 * <p>Only about clearing the way. Asked outright to mine a furnace, the bot still mines it.</p>
-	 */
-	public static final BooleanSetting PROTECT_BUILT = new BooleanSetting("protectBuilt", true,
-			"Whether to route around chests, furnaces, crafting tables, beds, signs and anything else "
-					+ "that was built rather than grown, instead of mining through them. Does not stop an "
-					+ "explicit 'mine' or a 'find' aimed at one.");
-
-	/**
-	 * When a held or worn item counts as nearly worn out.
-	 *
-	 * <p>Ten percent, which on an iron pickaxe is about 25 swings — enough warning to walk back and
-	 * still finish the tunnel, and not so early that every long job opens with a complaint.</p>
-	 */
-	public static final IntSetting LOW_DURABILITY = new IntSetting("lowDurability", 10, 0, 100,
-			"The percentage of durability at which a held or worn item is reported as nearly worn out. "
-					+ "The AI is told once per run, per item. 0 turns the warnings off.");
-
 	/** How long to wait for the model to reply. Cloud round-trips on a big model are not quick. */
 	public static final IntSetting AI_REQUEST_TIMEOUT = new IntSetting(
 			"aiRequestTimeout", 180, 5, 900,
@@ -435,7 +444,41 @@ public final class BotSettings {
 			0.0, 2.0,
 			"How inventive the model is. Low is right for choosing between functions.");
 
+	// ---------------------------------------------------------------- protecting and wear
+
+	static {
+		SettingRegistry.group("Protecting and wear");
+	}
+
+	/**
+	 * Whether the bot mines its way through things people built.
+	 *
+	 * <p>On, because the failure it prevents is not recoverable. A route through a base ends with the
+	 * chest gone and its contents on the floor, or already despawned; a route around it costs a few
+	 * seconds. Those are not the same size of mistake, so the default is not a close call.</p>
+	 *
+	 * <p>Only about clearing the way. Asked outright to mine a furnace, the bot still mines it.</p>
+	 */
+	public static final BooleanSetting PROTECT_BUILT = new BooleanSetting("protectBuilt", true,
+			"Whether to route around chests, furnaces, crafting tables, beds, signs and anything else "
+					+ "that was built rather than grown, instead of mining through them. Does not stop an "
+					+ "explicit 'mine' or a 'find' aimed at one.");
+
+	/**
+	 * When a held or worn item counts as nearly worn out.
+	 *
+	 * <p>Ten percent, which on an iron pickaxe is about 25 swings — enough warning to walk back and
+	 * still finish the tunnel, and not so early that every long job opens with a complaint.</p>
+	 */
+	public static final IntSetting LOW_DURABILITY = new IntSetting("lowDurability", 10, 0, 100,
+			"The percentage of durability at which a held or worn item is reported as nearly worn out. "
+					+ "The AI is told once per run, per item. 0 turns the warnings off.");
+
 	// ---------------------------------------------------------------- banking the haul
+
+	static {
+		SettingRegistry.group("Banking the haul");
+	}
 
 	/**
 	 * Where {@code /mcbot chest} looks when it is not told.
@@ -470,6 +513,10 @@ public final class BotSettings {
 					+ "before drops start being left on the ground.");
 
 	// ---------------------------------------------------------------- searching and collecting
+
+	static {
+		SettingRegistry.group("Searching and collecting");
+	}
 
 	/** Radius searched for dropped items when the bot runs out of something it needs. */
 	public static final DoubleSetting ITEM_SEARCH_RADIUS = new DoubleSetting("itemSearchRadius", 50.0,
@@ -523,6 +570,10 @@ public final class BotSettings {
 			"Squared distance a hunted mob may wander before the route is re-aimed at it.");
 
 	// ---------------------------------------------------------------- execution
+
+	static {
+		SettingRegistry.group("Execution");
+	}
 
 	/**
 	 * Distance at which a path node counts as entered, so progress moves to the following node.
@@ -596,6 +647,10 @@ public final class BotSettings {
 
 	// ---------------------------------------------------------------- parkour
 
+	static {
+		SettingRegistry.group("Parkour");
+	}
+
 	/**
 	 * How many nodes ahead a coming jump forces sprinting on. A sprint-jump lives or dies on the
 	 * run-up: arriving at the launch block already at full speed is the difference between clearing a
@@ -622,6 +677,10 @@ public final class BotSettings {
 					+ "short gap overshoots the landing.");
 
 	// ---------------------------------------------------------------- route tracking
+
+	static {
+		SettingRegistry.group("Route tracking");
+	}
 
 	/**
 	 * How many nodes ahead progress tracking will look when deciding how far along the route the
@@ -705,6 +764,10 @@ public final class BotSettings {
 	// Not Baritone's territory — it has no combat or hunger handling at all. Kept as a deliberate
 	// superset, because a navigation bot that starves or gets beaten to death mid-route does not
 	// finish the route.
+
+	static {
+		SettingRegistry.group("Combat and eating");
+	}
 
 	/** Interaction reach. Vanilla survival is 4.5; stay under it for block break/place. */
 	public static final DoubleSetting REACH = new DoubleSetting("reach", 4.0, 1.0, 4.5,

@@ -1,5 +1,7 @@
 package mcbot.client.ai;
 
+import java.util.List;
+
 import mcbot.client.BotSettings;
 import mcbot.client.settings.Setting;
 import mcbot.client.settings.SettingChoice;
@@ -75,6 +77,21 @@ public enum AiProvider implements SettingChoice {
 	}
 
 	/**
+	 * The names an API key for this provider may go by, best first — empty when none is needed.
+	 *
+	 * <p>Lets anything ask whether a provider is usable without knowing which one it is asking about,
+	 * and without a key ever leaving {@link ApiKeys}. The lists themselves live on the providers that
+	 * use them, so there is one place a name is written down.</p>
+	 */
+	public List<String> keyNames() {
+		return switch (this) {
+			case LOCAL, CLOUD -> List.of();
+			case CLAUDE -> ClaudeProvider.KEY_NAMES;
+			case GEMINI -> GeminiProvider.KEY_NAMES;
+		};
+	}
+
+	/**
 	 * A warning, when the setting just changed is a model name the active provider does not read.
 	 *
 	 * <p>There are four model settings and they differ by one word in the middle, which is one word too
@@ -86,15 +103,30 @@ public enum AiProvider implements SettingChoice {
 	 * @return the clause to append, or empty when the change was the relevant one
 	 */
 	public static String inertNote(Setting changed) {
+		AiProvider reader = readerOf(changed);
 		AiProvider active = BotSettings.AI_PROVIDER.get();
+		if (reader == null || reader == active) {
+			return "";
+		}
+		return " Note: aiProvider is '" + active.key() + "', which reads "
+				+ active.modelSetting().name() + " — so this has no effect on anything until "
+				+ "'/mcbot set aiProvider " + reader.key() + "'.";
+	}
+
+	/**
+	 * The provider that reads this setting for its model name, or {@code null} if none does.
+	 *
+	 * <p>The question behind {@link #inertNote}, separated from the sentence it produces so that the
+	 * settings screen — which has a colour to say it with and no room for a sentence — can ask it
+	 * too.</p>
+	 */
+	public static AiProvider readerOf(Setting setting) {
 		for (AiProvider provider : values()) {
-			if (provider.modelSetting() == changed && provider != active) {
-				return " Note: aiProvider is '" + active.key() + "', which reads "
-						+ active.modelSetting().name() + " — so this has no effect on anything until "
-						+ "'/mcbot set aiProvider " + provider.key() + "'.";
+			if (provider.modelSetting() == setting) {
+				return provider;
 			}
 		}
-		return "";
+		return null;
 	}
 
 	/** Opens a client for this provider. */

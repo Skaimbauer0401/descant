@@ -4,6 +4,7 @@ import mcbot.client.ai.AiAgent;
 import mcbot.client.api.BotApi;
 import mcbot.client.command.McbotCommand;
 import mcbot.client.control.BotController;
+import mcbot.client.gui.McbotKeys;
 import mcbot.client.render.PathRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -52,6 +53,7 @@ public class McbotClient implements ClientModInitializer {
 		agent = new AiAgent(api, McbotClient::sendChatMessage);
 
 		new PathRenderer(controller).register();
+		McbotKeys.register();
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
 				new McbotCommand(api, agent).register(dispatcher));

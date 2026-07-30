@@ -1,5 +1,6 @@
 package mcbot.client.settings;
 
+import java.util.List;
 import java.util.Locale;
 
 /** A setting that is simply on or off. */
@@ -43,6 +44,11 @@ public final class BooleanSetting extends Setting {
 	@Override
 	public String domain() {
 		return "true or false";
+	}
+
+	@Override
+	public List<String> options() {
+		return List.of("true", "false");
 	}
 
 	@Override

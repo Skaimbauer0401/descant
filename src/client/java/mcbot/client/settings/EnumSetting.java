@@ -32,11 +32,6 @@ public final class EnumSetting<E extends Enum<E> & SettingChoice> extends Settin
 		this.value = newValue;
 	}
 
-	/** The options, so a command can offer them for tab completion and a model can be shown them. */
-	public List<E> options() {
-		return List.of(options);
-	}
-
 	@Override
 	public String type() {
 		return "choice";
@@ -47,6 +42,11 @@ public final class EnumSetting<E extends Enum<E> & SettingChoice> extends Settin
 		return "one of: " + Arrays.stream(options)
 				.map(option -> option.key() + " (" + option.describe() + ")")
 				.collect(Collectors.joining(", "));
+	}
+
+	@Override
+	public List<String> options() {
+		return Arrays.stream(options).map(SettingChoice::key).toList();
 	}
 
 	@Override

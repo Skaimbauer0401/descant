@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
@@ -25,6 +26,7 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.api.BotApi;
 import mcbot.client.control.TravelMode;
+import mcbot.client.gui.McbotKeys;
 import mcbot.client.inventory.ChestSource;
 import mcbot.client.Transcript;
 import mcbot.client.settings.Setting;
@@ -68,6 +70,7 @@ import net.minecraft.resources.Identifier;
  *   /mcbot ai &lt;what you want&gt;      hand the job to a language model
  *   /mcbot ai stop                 call it off
  *   /mcbot set [&lt;name&gt;] [&lt;value&gt;]  list, read or change a setting
+ *   /mcbot config                  open the settings screen (also on the G key)
  *   /mcbot api                     write the action menu out as JSON
  *   /mcbot stop | status | path
  * </pre>
@@ -177,6 +180,7 @@ public final class McbotCommand {
 								.executes(context -> run(context, "deposit", Arguments.of(
 										"what", StringArgumentType.getString(context, "what"))))))
 				.then(set())
+				.then(ClientCommands.literal("config").executes(McbotCommand::openSettings))
 				.then(ai())
 				.then(ClientCommands.literal("api").executes(this::dumpApi))
 				.then(ClientCommands.literal("stop")
@@ -388,14 +392,24 @@ public final class McbotCommand {
 		if (setting == null) {
 			return builder.buildFuture();
 		}
-		Stream<String> options = switch (setting.type()) {
-			case "boolean" -> Stream.of("true", "false");
-			// domain() reads "one of: looking (…), nearest (…)"; the key is the word before the gloss.
-			case "choice" -> Stream.of(setting.domain().replace("one of: ", "").split(", "))
-					.map(option -> option.split(" ")[0]);
-			default -> Stream.of(setting.asString());
-		};
-		return SharedSuggestionProvider.suggest(options, builder);
+		List<String> options = setting.options();
+		return SharedSuggestionProvider.suggest(
+				options.isEmpty() ? Stream.of(setting.asString()) : options.stream(), builder);
+	}
+
+	// ---------------------------------------------------------------- the screen
+
+	/**
+	 * {@code /mcbot config} — the same settings, with somewhere to click.
+	 *
+	 * <p>Queued for the next tick rather than opened here. This runs while the chat screen it was typed
+	 * into is still up, and that screen closes itself once the command returns — taking anything opened
+	 * during it with it.</p>
+	 */
+	private static int openSettings(CommandContext<FabricClientCommandSource> context) {
+		Minecraft.getInstance().execute(McbotKeys::open);
+		feedback(context, "Opening the settings. The G key opens them too.");
+		return 1;
 	}
 
 	// ---------------------------------------------------------------- the action menu

@@ -41,11 +41,14 @@ public final class GeminiProvider implements LlmProvider {
 	private static final String ENDPOINT =
 			"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
 
-	/** The name the key goes by, in the environment or the keys file — the one Google's tools use. */
-	private static final String KEY_VARIABLE = "GEMINI_API_KEY";
-
-	/** Accepted too, because the official SDKs read it as an alternative and people have it set. */
-	private static final String FALLBACK_KEY_VARIABLE = "GOOGLE_API_KEY";
+	/**
+	 * The names the key goes by, in the environment or the keys file, best first.
+	 *
+	 * <p>{@code GOOGLE_API_KEY} is accepted too, because the official SDKs read it as an alternative
+	 * and people have it set already. Read by {@link AiProvider#keyNames()} as well as here, so that
+	 * whatever asks "is this provider usable?" and whatever actually uses it agree.</p>
+	 */
+	static final List<String> KEY_NAMES = List.of("GEMINI_API_KEY", "GOOGLE_API_KEY");
 
 	/**
 	 * Ceiling on one reply.
@@ -70,7 +73,7 @@ public final class GeminiProvider implements LlmProvider {
 	private static String apiKey() throws IOException {
 		return ApiKeys.require("Gemini",
 				"Get one from aistudio.google.com/apikey — it has a free tier that covers this.",
-				KEY_VARIABLE, FALLBACK_KEY_VARIABLE);
+				KEY_NAMES);
 	}
 
 	@Override
@@ -358,7 +361,7 @@ public final class GeminiProvider implements LlmProvider {
 
 		if (lower.contains("api key not valid") || lower.contains("api_key_invalid")
 				|| status == 401) {
-			return "Google rejected the API key. Check the " + KEY_VARIABLE + " in " + ApiKeys.file()
+			return "Google rejected the API key. Check the " + KEY_NAMES.getFirst() + " in " + ApiKeys.file()
 					+ " (or in the environment) holds a current key from aistudio.google.com/apikey.";
 		}
 		if (lower.contains("api has not been used") || lower.contains("service_disabled")) {
