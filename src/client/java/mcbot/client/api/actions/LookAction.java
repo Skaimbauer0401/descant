@@ -1,9 +1,6 @@
 package mcbot.client.api.actions;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 import mcbot.client.api.Action;
 import mcbot.client.api.ActionContext;
@@ -14,27 +11,21 @@ import mcbot.client.api.ParameterType;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.phys.AABB;
 
 /**
- * Describes the bot's surroundings.
+ * Describes the bot's surroundings, or one named block.
  *
- * <p>{@code status} says what the bot is <em>doing</em>; this says where it <em>is</em>. The split
- * matters because they answer different questions and get called at different moments — "am I stuck?"
- * against "what is around me, and is it night?".</p>
+ * <p>{@code status} says what the bot is <em>doing</em> and how it is faring; this says what is
+ * <em>around</em> it. The two overlap on where and when — deliberately, since both are read on their
+ * own and a report that leaves out the dimension is a report a model has to follow up on — but only
+ * this one describes the ground underfoot, the block ahead, and every creature rather than only the
+ * dangerous ones. The shared facts come from {@link Surroundings} so the two cannot come to disagree
+ * about them.</p>
  *
  * <p>Everything here is cheap and read-only, which is deliberate: a model that has to spend an action
  * to look around will not bother, and will guess instead.</p>
  */
 public final class LookAction implements Action {
-
-	/** How far to sweep for entities. Beyond this the client does not reliably know about them. */
-	private static final double ENTITY_RANGE = 32.0;
-
-	/** Kinds of entity to name before the list is cut short. */
-	private static final int LISTED_KINDS = 8;
 
 	@Override
 	public String name() {
@@ -43,10 +34,12 @@ public final class LookAction implements Action {
 
 	@Override
 	public String description() {
-		return "Describe the bot's surroundings: exact coordinates, which way it faces, the dimension "
-				+ "and biome, the time of day and weather, the light level, what it is standing on, "
-				+ "and every creature or player nearby. Costs nothing and changes nothing. Call it "
-				+ "when you need to know where you are or what is around before deciding.";
+		return "Describe the bot's surroundings in full: exact coordinates, which way it faces, the "
+				+ "dimension and biome, the time of day and weather, the light level, what it is "
+				+ "standing on and what is directly ahead, and every creature or player nearby — not "
+				+ "just the hostile ones. Pass 'block' with coordinates to describe one exact spot "
+				+ "instead, which is how to check somewhere before building there. Costs nothing and "
+				+ "changes nothing.";
 	}
 
 	@Override
@@ -72,28 +65,15 @@ public final class LookAction implements Action {
 				.append(", ").append((int) player.getZ())
 				.append(" facing ").append(player.getDirection().getName());
 
-		text.append(" | ").append(level.dimension().identifier().getPath());
-		text.append(", ").append(biome(level, feet));
-
-		// Time as both the raw tick and what it means. 13000 is meaningless on its own; "night" is
-		// what actually changes a decision, since that is when things start spawning.
-		//
-		// getDefaultClockTime is this dimension's own clock — the nether and the end have no day
-		// cycle, and asking for the overworld's would report a sunrise that nothing there can see.
-		long time = level.getDefaultClockTime() % 24000L;
-		text.append(" | ").append(time < 12300 || time > 23850 ? "day" : "night")
-				.append(" (t=").append(time).append(")");
-		if (level.isThundering()) {
-			text.append(", thunderstorm");
-		} else if (level.isRaining()) {
-			text.append(", raining");
-		}
-
+		text.append(" | ").append(Surroundings.dimension(level));
+		text.append(", ").append(Surroundings.biome(level, feet));
+		text.append(" | ").append(Surroundings.clock(level));
 		text.append(" | light ").append(level.getMaxLocalRawBrightness(feet)).append("/15");
-		text.append(" | standing on ").append(blockName(level, feet.below()));
-		text.append(", facing ").append(blockName(level, feet.relative(player.getDirection())));
+		text.append(" | standing on ").append(Surroundings.blockName(level, feet.below()));
+		text.append(", facing ").append(Surroundings.blockName(level,
+				feet.relative(player.getDirection())));
+		text.append(" | nearby: ").append(Surroundings.creatures(level, player));
 
-		text.append(" | nearby: ").append(nearbyEntities(level, player));
 		return ActionResult.ok(text.toString());
 	}
 
@@ -115,49 +95,9 @@ public final class LookAction implements Action {
 			return ActionResult.failed("That spot is not loaded, so there is nothing to report. Travel "
 					+ "closer and ask again.");
 		}
-		return ActionResult.ok(blockName(level, pos) + " at " + pos.getX() + ", " + pos.getY() + ", "
-				+ pos.getZ() + ", with " + blockName(level, pos.above()) + " above and "
-				+ blockName(level, pos.below()) + " below.");
-	}
-
-	/**
-	 * Living things nearby, tallied by kind with the nearest one's distance.
-	 *
-	 * <p>Grouped rather than listed individually because a field of forty sheep is one fact, not
-	 * forty, and the distance that matters is the closest.</p>
-	 */
-	private static String nearbyEntities(ClientLevel level, LocalPlayer player) {
-		Map<String, int[]> tally = new LinkedHashMap<>();
-		AABB box = player.getBoundingBox().inflate(ENTITY_RANGE);
-
-		for (Entity entity : level.getEntitiesOfClass(Entity.class, box,
-				candidate -> candidate != player && candidate.isAlive())) {
-			String kind = BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).getPath();
-			int distance = (int) Math.round(entity.distanceTo(player));
-			int[] seen = tally.computeIfAbsent(kind, key -> new int[] { 0, Integer.MAX_VALUE });
-			seen[0]++;
-			seen[1] = Math.min(seen[1], distance);
-		}
-		if (tally.isEmpty()) {
-			return "nothing within " + (int) ENTITY_RANGE + " blocks";
-		}
-
-		return tally.entrySet().stream()
-				.sorted((a, b) -> Integer.compare(a.getValue()[1], b.getValue()[1]))
-				.limit(LISTED_KINDS)
-				.map(entry -> entry.getKey()
-						+ (entry.getValue()[0] > 1 ? " x" + entry.getValue()[0] : "")
-						+ " (" + entry.getValue()[1] + "m)")
-				.collect(Collectors.joining(", "));
-	}
-
-	private static String biome(ClientLevel level, BlockPos pos) {
-		return level.getBiome(pos).unwrapKey()
-				.map(key -> key.identifier().getPath())
-				.orElse("unknown biome");
-	}
-
-	private static String blockName(ClientLevel level, BlockPos pos) {
-		return BuiltInRegistries.BLOCK.getKey(level.getBlockState(pos).getBlock()).getPath();
+		return ActionResult.ok(Surroundings.blockName(level, pos) + " at " + pos.getX() + ", "
+				+ pos.getY() + ", " + pos.getZ() + ", with "
+				+ Surroundings.blockName(level, pos.above()) + " above and "
+				+ Surroundings.blockName(level, pos.below()) + " below.");
 	}
 }

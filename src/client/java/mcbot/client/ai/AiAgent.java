@@ -149,6 +149,7 @@ public final class AiAgent {
 			LlmReply reply = session.say(
 					recall(recent) + goal + "\n\nRight now: " + statusLine(minecraft));
 
+			int roundsSinceStatus = 0;
 			for (int step = 1; step <= maxSteps; step++) {
 				if (cancelled) {
 					say("Stopped.");
@@ -163,21 +164,32 @@ public final class AiAgent {
 				}
 
 				List<LlmProvider.ToolOutcome> outcomes = new ArrayList<>();
+				boolean carriedStatus = false;
+				boolean anyFailed = false;
 				for (ToolCall call : reply.calls()) {
 					if (cancelled) {
 						break;
 					}
 					say("→ " + call.describe());
-					// The warning rides along with the result rather than arriving on its own, because
-					// a tool outcome is the only thing the model reads. Anything said outside one is
-					// said to nobody.
+					Report report = runToCompletion(minecraft, call);
+					// A round that already said where the bot is does not need telling twice, and a model
+					// that asked outright has just been answered.
+					carriedStatus |= report.carriedStatus() || call.name().equals("status");
+					anyFailed |= report.failed();
+					// The warning rides along with the result rather than arriving on its own, because a
+					// tool outcome is the only thing the model reads. Anything said outside one is said
+					// to nobody.
 					outcomes.add(new LlmProvider.ToolOutcome(call,
-							runToCompletion(minecraft, call) + gearWarning(minecraft)));
+							report.message() + gearWarning(minecraft)));
 				}
 				if (cancelled) {
 					say("Stopped.");
 					return;
 				}
+
+				roundsSinceStatus = carriedStatus
+						? 0
+						: attachStatus(minecraft, outcomes, anyFailed, roundsSinceStatus + 1);
 				reply = session.report(outcomes);
 			}
 
@@ -194,6 +206,39 @@ public final class AiAgent {
 		} finally {
 			running = false;
 		}
+	}
+
+	/**
+	 * Puts the bot's situation in front of the model whether it asked or not.
+	 *
+	 * <p>Two reasons to, and they are different. <b>Every few rounds</b>, because a model works from
+	 * whatever it last read, and a picture six calls old is how a bot ends up mining at the wrong depth
+	 * in the wrong dimension on three hearts. Telling it to check regularly does not work — a model told
+	 * that does it twice and then forgets — so the loop inserts one rather than asking for one.
+	 * <b>After anything failed</b>, because a call that did not work is exactly the moment its picture
+	 * of the world is known to be wrong, and a status is the cheapest correction there is.</p>
+	 *
+	 * <p>Appended to the last outcome rather than sent as a message of its own: a tool result is the
+	 * only thing the model is guaranteed to read, and providers disagree about whether an unsolicited
+	 * turn may even be inserted mid-conversation.</p>
+	 *
+	 * @return the new round count — zero if a status went in, otherwise the one passed in
+	 */
+	private int attachStatus(Minecraft minecraft, List<LlmProvider.ToolOutcome> outcomes,
+			boolean anyFailed, int rounds) throws IOException {
+		int every = BotSettings.AI_STATUS_EVERY.get();
+		if (outcomes.isEmpty() || !(anyFailed || (every > 0 && rounds >= every))) {
+			return rounds;
+		}
+
+		int last = outcomes.size() - 1;
+		LlmProvider.ToolOutcome tail = outcomes.get(last);
+		outcomes.set(last, new LlmProvider.ToolOutcome(tail.call(), tail.result()
+				+ (anyFailed
+						? " | Before trying again, here is how things actually stand — "
+						: " | Where things stand now — ")
+				+ statusLine(minecraft)));
+		return 0;
 	}
 
 	/**
@@ -249,19 +294,27 @@ public final class AiAgent {
 	}
 
 	/**
-	 * Runs one call and does not answer until the bot has stopped doing it.
+	 * What one call did, and whether saying so already included the bot's situation.
 	 *
-	 * @return what happened, in the words the model will read
+	 * @param message       what happened, in the words the model will read
+	 * @param failed        whether the call did not do what was asked
+	 * @param carriedStatus whether a status is already in {@code message}, so the loop does not add a
+	 *                      second copy of the same sentence to the same round
 	 */
-	private String runToCompletion(Minecraft minecraft, ToolCall call) throws IOException {
+	private record Report(String message, boolean failed, boolean carriedStatus) {
+	}
+
+	/** Runs one call and does not answer until the bot has stopped doing it. */
+	private Report runToCompletion(Minecraft minecraft, ToolCall call) throws IOException {
 		ActionResult result = onClientThread(minecraft, () -> api.invoke(call.name(), call.toArguments()));
 		if (!result.ok()) {
 			// Prefixed so it is unmistakable. A model skimming its own history needs the failures to
 			// stand out from the successes, or it repeats them.
-			return "FAILED: " + result.message();
+			return new Report("FAILED: " + result.message(), true, false);
 		}
 		if (!onClientThread(minecraft, api::busy)) {
-			return result.message(); // finished on the spot — a setting change, a status read
+			// Finished on the spot — a setting change, a status read, a locate.
+			return new Report(result.message(), false, false);
 		}
 
 		long deadline = System.nanoTime()
@@ -281,13 +334,14 @@ public final class AiAgent {
 		}
 
 		if (cancelled) {
-			return "Cancelled by the player.";
+			return new Report("Cancelled by the player.", false, false);
 		}
 		String status = statusLine(minecraft);
-		return settled
+		return new Report(settled
 				? result.message() + " Finished — " + status
 				: result.message() + " Still going after " + BotSettings.AI_ACTION_TIMEOUT.get()
-						+ "s, so it may be a long job or it may be stuck — " + status;
+						+ "s, so it may be a long job or it may be stuck — " + status,
+				false, true);
 	}
 
 	private String statusLine(Minecraft minecraft) throws IOException {
@@ -337,7 +391,17 @@ public final class AiAgent {
 				or wait — if you asked it to travel somewhere, the result already says whether it \
 				arrived.
 				- A result starting with FAILED means it did not happen. Read why and do something \
-				different; calling it again unchanged will fail again.
+				different; calling it again unchanged will fail again. A failed result also \
+				carries the bot's status, because a call that did not work usually means your \
+				picture of where the bot is was wrong. Read it before deciding.
+				- WHEN IN DOUBT, CALL status. Not sure whether the bot moved, whether the last \
+				thing worked, what dimension or biome it is in, whether it is night, whether \
+				anything is attacking it, or how hurt it is — status answers all of that, costs \
+				nothing and changes nothing. Guessing is the expensive option.
+				- A status is also added to the results by itself every few rounds, and after \
+				anything that travelled, so you are never working from a picture more than a \
+				few calls old. Read the one you are given rather than calling status again \
+				straight afterwards.
 				- When the task is done, or you cannot make progress, reply in plain words with no \
 				function call. That ends the run.
 				- STOP AND WARN, calling nothing, if you are about to gather or dig while \
@@ -422,17 +486,25 @@ public final class AiAgent {
 				with its hands, which is slow enough to look like a hang.
 				- Set a chest with chest before a long gathering job, so the bot can empty its \
 				inventory and keep going instead of stopping when full.
-				- status tells you where the bot is, its health and hunger, and how full it is; \
-				inventory tells you exactly what it is carrying; locate gives the exact \
+				- status is the one to reach for. It gives what the bot is doing and how far \
+				along, where it is, THE DIMENSION AND BIOME, the time of day and the light \
+				level, ANYTHING HOSTILE NEARBY with how close it is, health and hunger, how \
+				full the inventory is, and where it is banking. The dimension matters more \
+				than anything else on that line: ore depths, what is findable and what is \
+				dangerous are all different in the nether and the end, so never reason about \
+				overworld depths without checking which world you are in. Light under 8 at \
+				night or underground is where things spawn.
+				- inventory tells you exactly what it is carrying; locate gives the exact \
 				coordinates of the nearest several blocks of a kind, nearest first, \
 				without going there. All three cost nothing, so call them rather than \
 				guessing — locate before deciding whether to walk to something or place \
 				your own, and read the whole list: which of three furnaces is closest, \
 				whether the ore is all in one direction, whether the nearest one is so \
 				far that the trip is not worth it.
-				- look describes the surroundings: coordinates, which way it faces, dimension, \
-				biome, time of day, weather, light, and every creature nearby. Free, like \
-				the other two.
+				- look is status's longer cousin: it adds which way the bot faces, what it is \
+				standing on, what is directly ahead, and EVERY creature nearby rather than \
+				only the hostile ones. look with block='x y z' describes one exact spot, \
+				which is how to check somewhere before building there. Free, like the others.
 				- place puts a block down, in front of the bot or at a spot you name; it has to \
 				be carried already. mine is its opposite, breaking the block at exact \
 				coordinates. Use find when you want a kind of block wherever it happens to \

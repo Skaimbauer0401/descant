@@ -442,6 +442,24 @@ public final class BotSettings {
 					+ "minutes are never included.");
 
 	/**
+	 * How many rounds of the AI loop may pass before a status is put in front of the model unasked.
+	 *
+	 * <p>Three, which is often enough that nothing goes badly wrong unnoticed and rare enough not to
+	 * bury the results the model actually asked for. A model told to "check status regularly" does it
+	 * twice and then forgets — the model is not the reliable party here, so the loop inserts it rather
+	 * than asking. Rounds that already carried one, because the bot travelled or because status was
+	 * called outright, reset the count instead of adding a second copy.</p>
+	 *
+	 * <p>0 turns the regular one off. A status is still attached after a failed call whatever this
+	 * says: a call that did not work is precisely the moment the model's picture of the world is wrong,
+	 * and it is the cheapest possible correction.</p>
+	 */
+	public static final IntSetting AI_STATUS_EVERY = new IntSetting("aiStatusEvery", 3, 0, 50,
+			"How many rounds of AI thinking may pass before the bot's status is added to the results "
+					+ "unasked, so the model always knows where it is and how it is faring. 0 turns the "
+					+ "regular one off; a status is still added whenever a call fails.");
+
+	/**
 	 * Model temperature.
 	 *
 	 * <p>Low. Picking the right function from a list is not a task that benefits from invention, and

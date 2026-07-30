@@ -6,17 +6,22 @@ import mcbot.client.api.ActionResult;
 import mcbot.client.api.Arguments;
 import mcbot.client.control.BotController;
 import mcbot.client.inventory.InventoryManager;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 
 /**
- * Reports what the bot is doing and how it is faring.
+ * Reports what the bot is doing, where it is, and what it is up against.
  *
- * <p>Deliberately more than the old status line. For a person this answers "is it stuck?"; for a
- * model it is the only way to perceive anything at all, and a model that cannot tell it is on 3
- * hearts, or that its inventory is full, cannot decide to do anything about it. So health, hunger
- * and inventory go in alongside the route — they cost nothing to report and are exactly the facts
- * that should change the next decision.</p>
+ * <p>Deliberately more than the old status line. For a person this answers "is it stuck?"; for a model
+ * it is the closest thing to perception it has, and one that cannot tell it is on 3 hearts, or that
+ * its inventory is full, cannot decide to do anything about it.</p>
+ *
+ * <p>The world half — dimension, biome, time, light, what is hostile nearby — is here rather than
+ * only in {@code look} because this is the report that arrives <em>unasked</em>, both after every
+ * action that moved the bot and every few rounds of the AI loop. A model that has to make a second
+ * call to find out it is in the Nether at night is a model that will not make it, and will reason
+ * about the overworld instead. {@code look} still says more; this says enough to not be wrong.</p>
  */
 public final class StatusAction implements Action {
 
@@ -27,17 +32,22 @@ public final class StatusAction implements Action {
 
 	@Override
 	public String description() {
-		return "Report what the bot is currently doing, where it is, its health and hunger, and how "
-				+ "full its inventory is. Costs nothing and changes nothing — call it whenever you need "
-				+ "to know how things stand before deciding what to do next.";
+		return "Report how things stand: what the bot is doing and how far along, where it is, the "
+				+ "dimension and biome, the time of day and light, anything hostile nearby, its health "
+				+ "and hunger, how full its inventory is, and where it is banking. Costs nothing and "
+				+ "changes nothing. Call it whenever you are unsure of anything — whether the bot moved, "
+				+ "whether something worked, what is around it — rather than assuming.";
 	}
 
 	@Override
 	public ActionResult run(ActionContext context, Arguments arguments) {
 		BotController controller = context.controller();
 		LocalPlayer player = context.player();
+		ClientLevel level = context.minecraft().level;
+		BlockPos feet = BlockPos.containing(player.position());
 		StringBuilder text = new StringBuilder();
 
+		// ---- what it is doing
 		text.append(controller.status());
 		BlockPos goal = controller.goal();
 		if (goal != null) {
@@ -57,8 +67,18 @@ public final class StatusAction implements Action {
 			text.append(" [").append(progress).append("]");
 		}
 
+		// ---- where it is
 		text.append(" | at ").append((int) player.getX()).append(", ")
 				.append((int) player.getY()).append(", ").append((int) player.getZ());
+		text.append(" in ").append(Surroundings.dimension(level));
+		text.append(", ").append(Surroundings.biome(level, feet));
+
+		// ---- when it is, and how likely that is to spawn something on top of it
+		text.append(" | ").append(Surroundings.clock(level));
+		text.append(", light ").append(level.getMaxLocalRawBrightness(feet)).append("/15");
+		text.append(" | threats: ").append(Surroundings.threats(level, player));
+
+		// ---- how it is faring
 		text.append(" | health ").append(Math.round(player.getHealth())).append("/20");
 		text.append(", hunger ").append(player.getFoodData().getFoodLevel()).append("/20");
 		text.append(" | inventory ").append(Math.round(InventoryManager.fullness(player) * 100)).append("% full");
