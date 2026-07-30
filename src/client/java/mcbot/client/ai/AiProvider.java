@@ -31,16 +31,7 @@ public enum AiProvider implements SettingChoice {
 	 * the token — a Claude Pro or Max subscription does not cover it, and there is no way to make it.
 	 * Haiku is cheap enough that the distinction is mostly academic, but it is a real one.</p>
 	 */
-	CLAUDE("claude", "Anthropic's API — needs ANTHROPIC_API_KEY, billed per token"),
-
-	/**
-	 * Google's Gemini API.
-	 *
-	 * <p>Needs a {@code GEMINI_API_KEY} in the environment. Unlike Anthropic's, this one has a real
-	 * free tier — rate-limited per minute and per day, but the limits are far above what driving a bot
-	 * uses — which makes it the cheapest way to put a strong model behind the bot.</p>
-	 */
-	GEMINI("gemini", "Google's Gemini API — needs GEMINI_API_KEY, has a free tier");
+	CLAUDE("claude", "Anthropic's API — needs ANTHROPIC_API_KEY, billed per token");
 
 	private final String key;
 	private final String description;
@@ -72,7 +63,6 @@ public enum AiProvider implements SettingChoice {
 			case LOCAL -> BotSettings.AI_MODEL;
 			case CLOUD -> BotSettings.AI_CLOUD_MODEL;
 			case CLAUDE -> BotSettings.AI_CLAUDE_MODEL;
-			case GEMINI -> BotSettings.AI_GEMINI_MODEL;
 		};
 	}
 
@@ -87,18 +77,16 @@ public enum AiProvider implements SettingChoice {
 		return switch (this) {
 			case LOCAL, CLOUD -> List.of();
 			case CLAUDE -> ClaudeProvider.KEY_NAMES;
-			case GEMINI -> GeminiProvider.KEY_NAMES;
 		};
 	}
 
 	/**
 	 * A warning, when the setting just changed is a model name the active provider does not read.
 	 *
-	 * <p>There are four model settings and they differ by one word in the middle, which is one word too
-	 * few. Setting {@code aiModel} while running Gemini changes something real, succeeds, reports
-	 * success, and has no effect on anything — and the only evidence is a quota message naming a model
-	 * nobody chose. Cheap to detect and expensive to work out, so it is said at the point of the
-	 * mistake.</p>
+	 * <p>The model settings differ by one word in the middle, which is one word too few. Setting
+	 * {@code aiModel} while running Claude changes something real, succeeds, reports success, and has
+	 * no effect on anything — and the only evidence is an error message naming a model nobody chose.
+	 * Cheap to detect and expensive to work out, so it is said at the point of the mistake.</p>
 	 *
 	 * @return the clause to append, or empty when the change was the relevant one
 	 */
@@ -133,7 +121,6 @@ public enum AiProvider implements SettingChoice {
 	public LlmProvider create() {
 		return switch (this) {
 			case CLAUDE -> new ClaudeProvider();
-			case GEMINI -> new GeminiProvider();
 			// Local and cloud are one class: a cloud model is proxied through the same daemon, and the
 			// only difference that reaches the code is the model name.
 			case LOCAL, CLOUD -> new OllamaProvider();

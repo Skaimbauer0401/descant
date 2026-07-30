@@ -364,21 +364,6 @@ public final class BotSettings {
 					+ "is well suited to picking actions; claude-sonnet-4-5 is stronger and dearer.");
 
 	/**
-	 * Gemini's model id.
-	 *
-	 * <p>Flash rather than Flash-Lite. The bot's characteristic failure is picking the wrong action out
-	 * of twenty, not writing a poor sentence, and Flash is the tier Google puts forward for agentic
-	 * work; at a handful of calls per task the saving from dropping a tier is not worth the mistakes.
-	 * Deliberation is charged against the reply budget on these models, which is the other reason not
-	 * to pick the one that thinks hardest.</p>
-	 */
-	public static final StringSetting AI_GEMINI_MODEL = new StringSetting(
-			"aiGeminiModel", "gemini-3.6-flash",
-			"a Gemini model id",
-			"Which Gemini model to use when aiProvider is 'gemini'. gemini-3.6-flash is the balanced one "
-					+ "and fits in the free tier; gemini-3.5-flash-lite is faster and cheaper still.");
-
-	/**
 	 * Where the model comes from.
 	 *
 	 * <p>Defaults to {@code local}: the one that costs nothing, needs no account and sends nothing
@@ -386,10 +371,9 @@ public final class BotSettings {
 	 */
 	public static final EnumSetting<AiProvider> AI_PROVIDER = new EnumSetting<>(
 			"aiProvider", AiProvider.LOCAL,
-			"Which model drives the bot: a local Ollama model, an Ollama cloud model, Anthropic's API or "
-					+ "Google's. 'claude' needs an ANTHROPIC_API_KEY and is billed per token — a Claude "
-					+ "Pro subscription does not cover API use. 'gemini' needs a GEMINI_API_KEY and has a "
-					+ "free tier.");
+			"Which model drives the bot: a local Ollama model, an Ollama cloud model, or Anthropic's "
+					+ "API. 'claude' needs an ANTHROPIC_API_KEY and is billed per token — a Claude Pro "
+					+ "subscription does not cover API use.");
 
 	/** Where the Ollama daemon is. Cloud models go through it too. */
 	public static final StringSetting AI_HOST = new StringSetting(

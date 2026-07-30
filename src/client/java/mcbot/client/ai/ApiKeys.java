@@ -43,7 +43,7 @@ public final class ApiKeys {
 	/**
 	 * Finds a key, or explains where to put one.
 	 *
-	 * @param service what is being reached, for the message: {@code "Gemini"}
+	 * @param service what is being reached, for the message: {@code "Claude"}
 	 * @param help    one sentence on where a key comes from and what it costs
 	 * @param names   the accepted variable names, best first — several because the official SDKs of
 	 *                some providers read more than one, and someone who already has one set should not
@@ -145,9 +145,6 @@ public final class ApiKeys {
 					#
 					# Anyone holding one of these can spend on your account. Keep the file out of
 					# screenshots, and out of any folder you share or commit.
-
-					# Google, from aistudio.google.com/apikey — has a free tier
-					#GEMINI_API_KEY=
 
 					# Anthropic, from console.anthropic.com — billed per token; Pro does not cover it
 					#ANTHROPIC_API_KEY=
