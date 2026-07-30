@@ -13,9 +13,11 @@ import java.util.stream.Collectors;
 import mcbot.client.BotSettings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Inventory;
@@ -173,7 +175,61 @@ public final class InventoryManager {
 	 * caller responds by gathering scaffolding.</p>
 	 */
 	public static boolean equipBuildingBlock(Minecraft minecraft, LocalPlayer player, Block excluded) {
-		return equip(minecraft, player, scaffoldFilter(excluded));
+		Item chosen = scaffoldItem();
+		if (chosen != null) {
+			// A named block is exactly that block, and the first slot holding it will do.
+			return equip(minecraft, player, stack -> stack.is(chosen));
+		}
+		// 'any' means the cheapest thing to hand, not the first thing to hand.
+		return equipBest(minecraft, player, stack -> expendability(stack, excluded), 0.0);
+	}
+
+	/**
+	 * How willing the bot should be to spend one block of this on a bridge. Higher is more willing.
+	 *
+	 * <p>{@code scaffoldBlock=any} used to mean "the first solid block in the inventory", which is
+	 * whatever the slot order happened to put first — and that is how a bot ends up pillaring out of a
+	 * ravine on obsidian while carrying a stack of netherrack. "Any" is meant to say <em>spend what is
+	 * spare</em>, so it now ranks what is spare rather than taking the first thing that qualifies.</p>
+	 *
+	 * <p>Ranked from the game's own data rather than a list of block names, which would go stale and
+	 * would know nothing about a mod pack:</p>
+	 *
+	 * <ul>
+	 * <li><b>What pickaxe it takes to get one back.</b> The {@code NEEDS_*_TOOL} tags are exactly the
+	 * game saying "this one is precious" — obsidian, ancient debris and netherite are diamond-tier;
+	 * the diamond, emerald and gold blocks are iron-tier. This dominates the score, because a block
+	 * that needs a better pickaxe than the bot may even be carrying is not scaffolding.</li>
+	 * <li><b>How long one takes to break.</b> A fair proxy for how much work a single block
+	 * represents: netherrack 0.4, dirt 0.5, cobblestone 2, obsidian 50.</li>
+	 * <li><b>How many are in the stack</b>, as a tie-break — between two equally worthless blocks,
+	 * spend the one there is more of.</li>
+	 * </ul>
+	 *
+	 * @return 0 for anything that must not be spent at all, so {@link #equipBest} skips it
+	 */
+	private static double expendability(ItemStack stack, Block excluded) {
+		if (!isBuildingBlockExcept(stack, excluded)) {
+			return 0.0;
+		}
+		Block block = ((BlockItem) stack.getItem()).getBlock();
+
+		Holder<Block> holder = BuiltInRegistries.BLOCK.wrapAsHolder(block);
+		double score = 100.0;
+		if (holder.is(BlockTags.NEEDS_DIAMOND_TOOL)) {
+			score -= 60.0;
+		} else if (holder.is(BlockTags.NEEDS_IRON_TOOL)) {
+			score -= 40.0;
+		} else if (holder.is(BlockTags.NEEDS_STONE_TOOL)) {
+			score -= 20.0;
+		}
+		// Capped, so that the difference between "slow" and "absurd" does not swamp the tier penalty
+		// and leave every unbreakable-ish block sorted identically.
+		score -= Math.min(block.defaultDestroyTime(), 20.0);
+		score += Math.min(stack.getCount(), 64) / 64.0;
+		// Floored above zero: everything that got this far is still spendable, and returning 0 would
+		// mean "not scaffolding at all", which is a different answer.
+		return Math.max(score, 1.0);
 	}
 
 	/**

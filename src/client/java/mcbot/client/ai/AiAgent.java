@@ -437,8 +437,11 @@ public final class AiAgent {
 				aim either at a workstation the player is using unless they said to.
 				- GOING SOMEWHERE COSTS BLOCKS whenever digging is allowed. The bot bridges \
 				across gaps and water and pillars up cliffs, spending blocks straight out \
-				of its inventory, and left to itself it spends the first solid block it \
-				finds — which may be the thing you were sent to fetch.
+				of its inventory. Left to itself it spends the cheapest block it carries, \
+				judged by what pickaxe it takes to get one back and how long that takes — \
+				so netherrack and dirt go before cobblestone, and obsidian goes last. That \
+				is a good guess and not a promise: it knows nothing about what the trip \
+				was for, so the stack you were sent to fetch is only safe if you say so.
 				- So on any command that may build, pass scaffold with a cheap block the bot is \
 				carrying — cobblestone, dirt, cobbled_deepslate, netherrack — and SAY IN \
 				YOUR REPLY which one you chose. Check inventory first if you do not know \

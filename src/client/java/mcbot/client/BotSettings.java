@@ -283,9 +283,10 @@ public final class BotSettings {
 	 * Which block the bot spends on the scaffolding it places to get somewhere.
 	 *
 	 * <p>The pathfinder places blocks of its own accord — bridging gaps, pillaring upward — and this
-	 * decides what it spends. Left at {@code any} it grabs the first solid block that comes to hand,
-	 * which is fine when the pack is full of cobble and awful when the only stack left is the
-	 * player's diamond blocks.</p>
+	 * decides what it spends. Left at {@code any} it now picks the cheapest block carried rather than
+	 * the first one that comes to hand, ranked by what pickaxe it takes to get one back and how long
+	 * that takes — so netherrack and dirt go before cobblestone, and obsidian goes last. That is a
+	 * good guess and not a promise: naming a block is still the only way to bound what may be spent.</p>
 	 *
 	 * <p>A named block is <b>strict, not preferred</b>. Running out stops the bridging and the bot
 	 * routes around instead of quietly falling back to something valuable — the whole reason for
@@ -295,7 +296,8 @@ public final class BotSettings {
 			"scaffoldBlock", ANY_SCAFFOLD,
 			"a block id such as 'cobblestone' or 'dirt', or 'any'",
 			"Which block to spend on the bridges and pillars the bot builds to get somewhere. "
-					+ "'any' spends whatever solid block is spare, which may include something valuable. "
+					+ "'any' spends the cheapest solid block carried, judged by how hard it is to get "
+					+ "back. "
 					+ "A named block is never substituted: when it runs out the bot stops building and "
 					+ "routes around instead.");
 

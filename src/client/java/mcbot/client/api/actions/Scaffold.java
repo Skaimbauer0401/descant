@@ -13,10 +13,11 @@ import net.minecraft.world.item.Item;
  * The shared {@code scaffold} argument, for every action that can place blocks to get somewhere.
  *
  * <p>Travelling is not free. Bridging a ravine or pillaring up a cliff spends blocks out of the
- * inventory, and left to itself the bot spends the first solid thing it finds — which has been known
- * to be the stack the trip was for. This argument is how the caller says what may be spent, and the
- * fact that it appears on every action that travels is deliberate: a caller who has to name the
- * throwaway block each time cannot forget that one is being thrown away.</p>
+ * inventory. Left to itself the bot now spends the cheapest thing it is carrying rather than the
+ * first — but cheapest is a guess made from how hard a block is to get back, and it knows nothing
+ * about what the trip was for. This argument is how the caller says what may be spent, and the fact
+ * that it appears on every action that travels is deliberate: a caller who has to name the throwaway
+ * block each time cannot forget that one is being thrown away.</p>
  *
  * <p>It is one argument in five places rather than five arguments, so that "use dirt" means the same
  * thing to {@code goto} as it does to {@code find}, and so the wording the model reads is written
@@ -32,7 +33,8 @@ final class Scaffold {
 	 */
 	static final Parameter PARAMETER = Parameter.optional("scaffold", ParameterType.STRING,
 			"Which block to spend on the bridges and pillars the bot builds to get there — a cheap "
-					+ "block id such as 'cobblestone' or 'dirt', or 'any' to spend whatever is spare. "
+					+ "block id such as 'cobblestone' or 'dirt', or 'any' to spend the cheapest block "
+					+ "carried, worked out from how hard each is to get back. "
 					+ "A named block is never substituted: when it runs out the bot stops building and "
 					+ "routes around. The choice sticks until it is changed, so pass it whenever the "
 					+ "answer should differ, and say in your reply which block you chose.");
@@ -85,7 +87,7 @@ final class Scaffold {
 	static String note() {
 		Item chosen = InventoryManager.scaffoldItem();
 		return chosen == null
-				? " Any spare block may be spent on bridges and pillars along the way."
+				? " The cheapest block carried may be spent on bridges and pillars along the way."
 				: " Bridging and pillaring with " + InventoryManager.scaffoldName() + ".";
 	}
 }
