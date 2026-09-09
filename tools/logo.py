@@ -1,4 +1,4 @@
-"""Draws mcbot's logo and banner.
+"""Draws descant's logo and banner.
 
 Everything here is painted on a 32x32 grid — the size of a Minecraft block texture — and scaled up
 with nearest-neighbour, so every edge stays a hard pixel at 40px and at 512px alike. Nothing is
@@ -11,7 +11,7 @@ microphone. A scene at that size is a smudge.
     python tools/logo.py
 
 Writes:
-    src/main/resources/assets/mcbot/icon.png   128px, ships in the jar for Mod Menu
+    src/main/resources/assets/descant/icon.png   128px, ships in the jar for Mod Menu
     branding/icon-512.png                      512px, the Modrinth project icon
     branding/banner-1280x640.png               the gallery / social-preview banner
 """
@@ -78,21 +78,23 @@ def icon():
 
 # ---------------------------------------------------------------- wordmark
 
-# Five letters is not worth a font dependency, and a real font next to pixel artwork looks borrowed.
+# Seven letters is not worth a font dependency, and a real font next to pixel artwork looks borrowed.
 # 1 is ink, 0 is ground; x-height letters are five rows and sit on the same baseline as the tall two.
 GLYPHS = {
-    "m": ["11111", "10101", "10101", "10101", "10101"],
+    "d": ["00001", "00001", "01111", "10001", "10001", "10001", "01111"],
+    "e": ["01110", "10001", "11111", "10000", "01111"],
+    "s": ["01111", "10000", "01110", "00001", "11110"],
     "c": ["01111", "10000", "10000", "10000", "01111"],
-    "o": ["01110", "10001", "10001", "10001", "01110"],
-    "b": ["10000", "10000", "11110", "10001", "10001", "10001", "11110"],
+    "a": ["01110", "00001", "01111", "10001", "01111"],
+    "n": ["11110", "10001", "10001", "10001", "10001"],
     "t": ["0100", "0100", "1111", "0100", "0100", "0100", "0011"],
 }
 WORDMARK_ROWS = 7
 
 
 def wordmark(scale, colour):
-    """Renders "mcbot" as pixels, on the same baseline, at an exact integer scale."""
-    letters = [GLYPHS[c] for c in "mcbot"]
+    """Renders "descant" as pixels, on the same baseline, at an exact integer scale."""
+    letters = [GLYPHS[c] for c in "descant"]
     width = sum(len(g[0]) for g in letters) + (len(letters) - 1)
     image = Image.new("RGBA", (width * scale, WORDMARK_ROWS * scale), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
@@ -241,19 +243,21 @@ def banner(width=1280, height=640):
     mark = icon().resize((320, 320), Image.NEAREST)
     image.paste(mark, (160, 132), mark)
 
-    name = wordmark(scale=16, colour=(255, 255, 255, 255))
-    image.paste(name, (556, 202), name)
+    # Scale 13, not 16: "descant" is seven glyphs where "mcbot" was five, and at 16 it ran into the
+    # right edge. The wordmark sets the width of the whole right-hand block.
+    name = wordmark(scale=13, colour=(255, 255, 255, 255))
+    image.paste(name, (556, 206), name)
 
-    draw.text((560, 202 + name.height + 34), "a pathfinding bot you can talk to",
+    draw.text((560, 206 + name.height + 30), "a pathfinding bot you can talk to",
               font=_sans(38), fill=(170, 187, 208))
-    draw.text((560, 202 + name.height + 92), "FABRIC   ·   MINECRAFT 26.2   ·   CLIENT-SIDE",
+    draw.text((560, 206 + name.height + 88), "FABRIC   ·   MINECRAFT 26.2   ·   CLIENT-SIDE",
               font=_sans(22, bold=True), fill=(124, 227, 78))
     return image
 
 
 if __name__ == "__main__":
     art = icon()
-    for size, path in ((128, "src/main/resources/assets/mcbot/icon.png"),
+    for size, path in ((128, "src/main/resources/assets/descant/icon.png"),
                        (512, "branding/icon-512.png")):
         art.resize((size, size), Image.NEAREST).save(path)
         print("wrote", path)

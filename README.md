@@ -1,14 +1,18 @@
-# mcbot
+# Descant
 
 **A pathfinding bot that plays your own character — by command, or in plain words.**
 
+> *descant* — a melody line sung above the main tune. [Baritone](https://github.com/cabaletta/baritone)
+> is named after a voice; the movement here is Baritone's model, and the language layer is the line
+> that sits on top of it.
+
 Two things live in this mod.
 
-The first is a **navigator**. `/mcbot goto -1240 63 880` and your character walks there: A\* over the
+The first is a **navigator**. `/descant goto -1240 63 880` and your character walks there: A\* over the
 block grid, mining through what is in the way, bridging gaps, sprint-jumping ledges, climbing
 ladders, swimming, eating when it gets hurt and fighting back when something jumps it.
 
-The second is an **agent**. `/mcbot ai make me a wooden pickaxe` hands those same abilities to a
+The second is an **agent**. `/descant ai make me a wooden pickaxe` hands those same abilities to a
 language model as a menu of 24 typed functions, and it works the chain out itself — find wood, craft
 planks, craft a table, craft sticks, craft the pickaxe.
 
@@ -25,17 +29,17 @@ is an ordinary movement packet with nothing unusual in it.
 
 ## Sixty seconds
 
-1. Fabric Loader `0.19.3+` for **Minecraft 26.2**, then drop **Fabric API** and mcbot into `mods/`.
+1. Fabric Loader `0.19.3+` for **Minecraft 26.2**, then drop **Fabric API** and Descant into `mods/`.
 2. In game:
-   - `/mcbot goto -240 500` — travel to that column, at whatever height the ground turns out to be.
+   - `/descant goto -240 500` — travel to that column, at whatever height the ground turns out to be.
      **This is the form to use for long trips**: naming an exact Y a thousand blocks out means guessing
      the terrain height, and guessing wrong makes the bot tunnel down to your number on arrival.
-   - `/mcbot find iron_ore true 16` — hunt iron ore, mine it, move to the next, stop at sixteen, pick
+   - `/descant find iron_ore true 16` — hunt iron ore, mine it, move to the next, stop at sixteen, pick
      up the drops.
-   - `/mcbot chest looking` then `/mcbot deposit` — bank the haul in the chest under your crosshair.
-   - Press **`G`** for the settings screen (or `/mcbot config`).
+   - `/descant chest looking` then `/descant deposit` — bank the haul in the chest under your crosshair.
+   - Press **`G`** for the settings screen (or `/descant config`).
 3. For the talking half: install [Ollama](https://ollama.com), run `ollama signin` once, then
-   `/mcbot ai get me some iron and put it in that chest`.
+   `/descant ai get me some iron and put it in that chest`.
 
 **Press any movement key and the bot stops.** It should never fight you for control of your own
 character.
@@ -59,8 +63,8 @@ character.
 ## Telling it what you want
 
 ```
-/mcbot ai get 20 coal, smelt the iron in my furnace and put it all in the chest
-/mcbot ai stop
+/descant ai get 20 coal, smelt the iron in my furnace and put it all in the chest
+/descant ai stop
 ```
 
 The model never touches the game. It is handed **the same 24 actions the chat commands use**, as a
@@ -98,8 +102,8 @@ Ollama account can run today; minimax, glm-5, deepseek-v4, qwen3.5 and the Kimi 
 subscription or credits. *(Checked September 2026. Which models are free changes as often as which
 models exist, so the settings screen fetches the real list rather than trusting this table.)*
 
-Keys are read from **the environment first**, then `config/mcbot-keys.properties` — and never from a
-setting. Settings get listed by `/mcbot set`, echoed into chat, and written into the schema the model
+Keys are read from **the environment first**, then `config/descant-keys.properties` — and never from a
+setting. Settings get listed by `/descant set`, echoed into chat, and written into the schema the model
 itself reads; that is three separate ways for a credential to end up somewhere it cannot be taken back
 from.
 
@@ -114,27 +118,27 @@ through a full multi-turn job.
 
 | Command | Effect |
 | --- | --- |
-| `/mcbot goto <x> <y> <z>` · `<x> <z>` · `<y>` | Travel — the number of arguments picks the kind of goal |
-| `/mcbot walk …` · `/mcbot dig …` | The same three forms, never touching the world / mining from the start |
-| `/mcbot find <block\|mob> [keep going] [count]` | Go to the nearest one; `true` keeps going until the count is met |
-| `/mcbot locate <block> [count]` | Coordinates of the nearest several, without moving |
-| `/mcbot mine <x> <y> <z>` · `/mcbot place <block> [x y z]` | Break that block · put one down |
-| `/mcbot craft <item> [n]` · `/mcbot smelt <item> [n]` · `/mcbot use` | Make it · run a furnace · right-click what it is looking at |
-| `/mcbot inventory` · `/mcbot equip` · `/mcbot armour` · `/mcbot drop` | Carry, hold, wear, throw away |
-| `/mcbot chest [looking\|nearest\|off]` | Pick the container to bank into — `looking` is the one under your crosshair |
-| `/mcbot deposit [haul\|food\|all\|<item>]` · `/mcbot take <…> [n]` | Stash · fetch back out |
-| `/mcbot remember <name>` · `/mcbot recall [name]` · `/mcbot forget <name>` | Named places, per world |
-| `/mcbot look` · `/mcbot status` · `/mcbot path` | Surroundings · what it is doing · toggle the route display |
-| `/mcbot set [name] [value]` · `/mcbot config` | 84 settings, tab-completed · the settings screen |
-| `/mcbot ai <what you want>` · `/mcbot ai stop` | Hand the job to a model · call it off |
-| `/mcbot api` | Write the action menu out as `mcbot-actions.json` — the exact schema a model gets |
-| `/mcbot stop` | Stop, now |
+| `/descant goto <x> <y> <z>` · `<x> <z>` · `<y>` | Travel — the number of arguments picks the kind of goal |
+| `/descant walk …` · `/descant dig …` | The same three forms, never touching the world / mining from the start |
+| `/descant find <block\|mob> [keep going] [count]` | Go to the nearest one; `true` keeps going until the count is met |
+| `/descant locate <block> [count]` | Coordinates of the nearest several, without moving |
+| `/descant mine <x> <y> <z>` · `/descant place <block> [x y z]` | Break that block · put one down |
+| `/descant craft <item> [n]` · `/descant smelt <item> [n]` · `/descant use` | Make it · run a furnace · right-click what it is looking at |
+| `/descant inventory` · `/descant equip` · `/descant armour` · `/descant drop` | Carry, hold, wear, throw away |
+| `/descant chest [looking\|nearest\|off]` | Pick the container to bank into — `looking` is the one under your crosshair |
+| `/descant deposit [haul\|food\|all\|<item>]` · `/descant take <…> [n]` | Stash · fetch back out |
+| `/descant remember <name>` · `/descant recall [name]` · `/descant forget <name>` | Named places, per world |
+| `/descant look` · `/descant status` · `/descant path` | Surroundings · what it is doing · toggle the route display |
+| `/descant set [name] [value]` · `/descant config` | 84 settings, tab-completed · the settings screen |
+| `/descant ai <what you want>` · `/descant ai stop` | Hand the job to a model · call it off |
+| `/descant api` | Write the action menu out as `descant-actions.json` — the exact schema a model gets |
+| `/descant stop` | Stop, now |
 
 ---
 
 ## Settings
 
-**84 of them**, all tab-completed on `/mcbot set`, and all on a screen bound to **`G`**: a *Simple*
+**84 of them**, all tab-completed on `/descant set`, and all on a screen bound to **`G`**: a *Simple*
 tab for the ones anyone actually changes — the model, travelling, scaffolding, banking the haul,
 protecting your build, the route display, memory — and an *Advanced* tab for the pathfinder's own
 numbers. Only settings you have
@@ -178,24 +182,24 @@ sources and copied: the `Goal` abstraction (a pathfinder never needs to know *wh
 at different cost coefficients, backtrack cost favouring on replan, per-movement timeouts, the
 collinearity rule for sprinting, the positional parkour launch trigger, and the vanilla-derived cost
 constants. Also copied: what Baritone *doesn't* do — no path smoothing, no landing brake, no ladder
-move type. Each of those absences turned out to fix a symptom that had been chased for days. **mcbot
+move type. Each of those absences turned out to fix a symptom that had been chased for days. **Descant
 is LGPL-3.0 because Baritone is.**
 
 **[Voyager](https://voyager.minedojo.org/)** (NVIDIA / Caltech, 2023) — the idea that a language model
 can play Minecraft if you stop handing it a keyboard and hand it a **library of named skills with
-written descriptions** instead. mcbot's action API is that idea, typed: name, description, typed
+written descriptions** instead. Descant's action API is that idea, typed: name, description, typed
 parameters, one door in. The system prompt is treated as the real program, and its budget as a budget
 — anything a single action's own description can say belongs there, not in the prompt that is paid for
 on every round of every task.
 
-**[Mindcraft](https://github.com/kolbytn/mindcraft)** — the LLM-bot framework that has the thing mcbot
+**[Mindcraft](https://github.com/kolbytn/mindcraft)** — the LLM-bot framework that has the thing Descant
 still lacks: a task harness that can say *"model X completes the wooden-pickaxe chain 8 times in 10"*.
 The test set here exists on paper — chest-then-find sequencing, count inclusion, the health threshold,
 the pickaxe dependency chain — it has simply never been automated. That is the next honest step.
 
 **What is different:** Voyager and Mindcraft both drive a headless
 [Mineflayer](https://github.com/PrismarineJS/mineflayer) client — a second, separate player. Baritone
-drives your own character but has no language layer. mcbot is the pair of them: an in-client bot,
+drives your own character but has no language layer. Descant is the pair of them: an in-client bot,
 playing **your** character in **your** game, that you can also just talk to.
 
 ---
@@ -228,7 +232,7 @@ Written down because a mod page that lists only what works is not much use.
 | Depends on | Fabric API `0.155.2+26.2` |
 | Java | 25 |
 | Side | **Client only** — the server needs nothing |
-| Optional | [Ollama](https://ollama.com), for the `/mcbot ai` half |
+| Optional | [Ollama](https://ollama.com), for the `/descant ai` half |
 
 ## Licence
 

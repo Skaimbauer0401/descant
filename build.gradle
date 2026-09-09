@@ -14,7 +14,7 @@ loom {
     splitEnvironmentSourceSets()
 
     mods {
-        "mcbot" {
+        "descant" {
             sourceSet sourceSets.main
             sourceSet sourceSets.client
         }

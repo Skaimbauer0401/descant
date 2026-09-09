@@ -1,31 +1,35 @@
 {
   "schemaVersion": 1,
-  "id": "mcbot",
+  "id": "descant",
   "version": "${version}",
-  "name": "mcbot",
-  "description": "A client-side pathfinding bot you can talk to. Baritone-model navigation — walking, mining, bridging, parkour, ladders — driven either by /mcbot commands or by a language model through a typed action API.",
+  "name": "Descant",
+  "description": "A client-side pathfinding bot you can talk to. Baritone-model navigation — walking, mining, bridging, parkour, ladders — driven either by /descant commands or by a language model through a typed action API.",
   "authors": [
     "Skaimbauer"
   ],
-  "contact": {},
+  "contact": {
+    "homepage": "https://modrinth.com/mod/descant",
+    "sources": "https://github.com/Skaimbauer0401/descant",
+    "issues": "https://github.com/Skaimbauer0401/descant/issues"
+  },
   "license": "LGPL-3.0-only",
-  "icon": "assets/mcbot/icon.png",
+  "icon": "assets/descant/icon.png",
   "environment": "client",
   "entrypoints": {
     "fabric-datagen": [
-      "mcbot.client.McbotDataGenerator"
+      "descant.client.DescantDataGenerator"
     ],
     "client": [
-      "mcbot.client.McbotClient"
+      "descant.client.DescantClient"
     ],
     "main": [
-      "mcbot.Mcbot"
+      "descant.Descant"
     ]
   },
   "mixins": [
-    "mcbot.mixins.json",
+    "descant.mixins.json",
     {
-      "config": "mcbot.client.mixins.json",
+      "config": "descant.client.mixins.json",
       "environment": "client"
     }
   ],

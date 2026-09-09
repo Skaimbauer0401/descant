@@ -1,0 +1,2860 @@
+package descant.client.control;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+
+import descant.client.BotSettings;
+import descant.client.action.ActionState;
+import descant.client.action.BlockBreaker;
+import descant.client.action.BlockPlacer;
+import descant.client.action.ChestTransfer;
+import descant.client.action.Crafter;
+import descant.client.action.Smelter;
+import descant.client.action.CombatAction;
+import descant.client.action.Threats;
+import descant.client.action.DoorOpener;
+import descant.client.action.EatAction;
+import descant.client.inventory.InventoryManager;
+import descant.client.inventory.ItemScanner;
+import descant.client.path.AirFinder;
+import descant.client.path.BlockSearcher;
+import descant.client.path.Path;
+import descant.client.path.PathFinder;
+import descant.client.path.PathSmoother;
+import descant.client.path.WorldView;
+import descant.client.path.goal.Goal;
+import descant.client.path.goal.GoalBlock;
+import descant.client.path.goal.GoalNear;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.crafting.display.RecipeDisplayId;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+
+/**
+ * The brain: plans a route, walks it, and repairs the plan when reality disagrees.
+ *
+ * <p>Runs as a state machine ticked once per client tick. The interesting states are:</p>
+ * <ul>
+ *   <li>{@code PLANNING} — feeding the time-sliced A* search until it produces a path</li>
+ *   <li>{@code FOLLOWING} — steering towards the current path node</li>
+ *   <li>{@code BREAKING}/{@code PLACING} — standing still while a world edit completes</li>
+ * </ul>
+ *
+ * <p>Replanning is the mechanism that makes long journeys work. A path is only ever a best guess
+ * made from currently-loaded chunks; the bot walks it, and on reaching the end (or on getting
+ * stuck) plans again from wherever it actually ended up. Distant terrain therefore gets planned
+ * through once it has loaded, rather than being guessed at.</p>
+ */
+public final class BotController {
+
+	public enum Status {
+		IDLE,
+		PLANNING,
+		FOLLOWING,
+		BREAKING,
+		PLACING,
+		EATING,
+		/** Defending against a hostile that got too close. */
+		FIGHTING,
+		/** Breaking the block we came to mine, having arrived beside it. */
+		MINING,
+		/** Emptying the haul into the remembered chest. */
+		DEPOSITING,
+		/** Making something, in the inventory grid or at a bench. */
+		CRAFTING,
+		/** Working a furnace. */
+		SMELTING,
+		/** Walking over the drops left by a broken block. */
+		COLLECTING,
+		SUCCEEDED,
+		FAILED
+	}
+
+	/** Ticks to wait before retrying after a failed search, giving chunks a chance to load. */
+	private static final int REPLAN_COOLDOWN_TICKS = 10;
+
+	/** How close to a hunted mob the route needs to get before close-range pursuit takes over. */
+	private static final int ENTITY_GOAL_RADIUS = 2;
+
+	/** Ticks of being stuck before trying a jump, well before giving up and replanning. */
+	private static final int STUCK_JUMP_TICKS = 10;
+
+	private final BotInput input = new BotInput();
+	private final BlockBreaker breaker = new BlockBreaker();
+	private final BlockPlacer placer = new BlockPlacer();
+	private final DoorOpener doorOpener = new DoorOpener();
+	private final EatAction eater = new EatAction();
+	private final CombatAction combat = new CombatAction();
+	private final ChestTransfer transfer = new ChestTransfer();
+	private final Crafter crafter = new Crafter();
+	private final Smelter smelter = new Smelter();
+	private final Consumer<Component> messageSink;
+
+	private Status status = Status.IDLE;
+
+	/**
+	 * What the bot is trying to achieve — not necessarily a single block. Expressing this as a
+	 * {@link Goal} rather than a {@code BlockPos} is what lets one unchanged search pursue an exact
+	 * block, a column at any height, a depth to reach, or a radius around something.
+	 */
+	private Goal goal;
+	private boolean allowBreak = true;
+	private boolean allowPlace = true;
+
+	/**
+	 * What the current journey is allowed to do to the world.
+	 *
+	 * <p>Held alongside {@link #allowBreak} rather than replacing it because they answer different
+	 * questions: the mode is what was <em>asked for</em> and does not change, while the flags are what
+	 * is permitted <em>right now</em> and do. Under {@link TravelMode#TRY_WALK} the flags start false
+	 * and are turned on if the walk fails, and it is exactly that gap between the two that says an
+	 * escalation is still available.</p>
+	 */
+	private TravelMode travelMode = TravelMode.BUILD;
+
+	/** Sprint-jumping across gaps. Movement-only (no world edits), so it is allowed even on walk. */
+	private boolean allowParkour = true;
+
+	/** What the user asked for, so a temporary shortage does not permanently disable building. */
+	private boolean allowPlaceRequested = true;
+
+	/** The real destination, parked while the bot detours to collect something it needs. */
+	private Goal resumeGoal;
+
+	/** When mining a block type, what we are hunting; {@code null} for an ordinary journey. */
+	private Block huntedBlock;
+
+	/**
+	 * Every block that counts as the thing being hunted.
+	 *
+	 * <p>More than one because ores come in stone-type variants: below y=0 there is no ordinary
+	 * diamond ore at all. {@link #huntedBlock} stays the particular one currently being dug, since
+	 * that is what the quota counts and what the scaffolding must not spend.</p>
+	 */
+	private Set<Block> huntedFamily = Set.of();
+
+	/**
+	 * How the hunt is allowed to travel between one target and the next.
+	 *
+	 * <p>Held rather than passed, because {@link #continueHunt} starts each further leg by itself,
+	 * long after the caller that chose the mode has returned. Defaults to building: gathering is
+	 * the one job where digging is the point rather than a side effect.</p>
+	 */
+	private TravelMode huntTravel = TravelMode.BUILD;
+
+	/** When hunting a mob: the type to look for next, and the individual currently pursued. */
+	private EntityType<?> huntedType;
+	private Entity huntedEntity;
+
+	private String huntedName = "";
+
+	/** Whether a hunt mines what it finds and moves on, or merely travels to it once. */
+	private boolean huntExecute = true;
+
+	/**
+	 * How many to gather before the hunt is finished, or {@code 0} for "everything in range".
+	 *
+	 * <p>Counted in <em>blocks mined and mobs killed</em>, not in items ending up in the inventory.
+	 * That is a deliberate simplification and worth knowing about: fortune, deepslate variants and
+	 * mobs with random drop counts all mean twenty blocks is not exactly twenty items. Counting the
+	 * yield instead would need the drop item to be known up front, which the client cannot ask for —
+	 * loot tables live on the server, and a mob has no sensible answer at all. Counting the thing the
+	 * bot actually did is honest, uniform across blocks and mobs, and predictable enough to aim
+	 * with.</p>
+	 */
+	private int huntQuota;
+
+	/** How many have been mined or killed so far on this hunt. */
+	private int huntTally;
+
+	/**
+	 * What the current break is chewing through, and where.
+	 *
+	 * <p>Captured when the break starts, because by the time it finishes the block is air and there is
+	 * nothing left to identify. The hunt counts by block type, and blocks get broken by three
+	 * different routes — the thing we came for, an obstruction on the path, and a shove to get
+	 * unstuck — of which only the first used to be counted.</p>
+	 */
+	private Block breakingBlock;
+	private BlockPos breakingPos;
+
+	/**
+	 * Whether the last one finished the job.
+	 *
+	 * <p>Set when the block breaks or the mob dies, read once the drops have been swept up. The two
+	 * are separated by the whole collecting phase, and stopping at the kill would walk away from the
+	 * loot that was the point of the exercise.</p>
+	 */
+	private boolean huntReached;
+
+	/**
+	 * A block asked for by name, to be placed on arrival, and the item to place.
+	 *
+	 * <p>Distinct from the placing the pathfinder does on its own. Route scaffolding is anonymous —
+	 * any spare block, anywhere the plan says — whereas this is one named item at one named spot, and
+	 * finishes the task rather than continuing a journey.</p>
+	 */
+	private BlockPos buildTarget;
+	private Item buildItem;
+
+	/**
+	 * A pending craft: what to make, how many, and the bench to make it at.
+	 *
+	 * <p>{@code craftTable} is {@code null} for anything that fits the inventory's own 2x2 grid, which
+	 * needs no journey and no bench — the distinction is decided before the task starts, by the recipe
+	 * itself, rather than being discovered on arrival.</p>
+	 */
+	private RecipeDisplayId craftRecipe;
+	private BlockPos craftTable;
+	private int craftCount;
+	private String craftName = "";
+
+	/** A block to right-click on arrival — a lever, a door, a station to open. */
+	private BlockPos useTarget;
+
+	/**
+	 * One named block to break, as opposed to a hunt for a <em>kind</em> of block.
+	 *
+	 * <p>Kept alongside {@code mineTarget} rather than instead of it. The machinery that walks to a
+	 * block, breaks it and sweeps up the drops is exactly what this needs, so it borrows all of it;
+	 * this field only records that the job was a one-off dig, so finishing it can be announced instead
+	 * of quietly ending the way a spent hunt does.</p>
+	 */
+	private BlockPos digTarget;
+	private String digName = "";
+
+	/** A pending smelt: the furnace to use, what goes in, what burns, and how much of each. */
+	private BlockPos smeltFurnace;
+	private Item smeltInput;
+	private Item smeltFuel;
+	private int smeltCount;
+	private String smeltName = "";
+
+	/** Block to break on arrival, and the type expected there. The goal is a spot beside it. */
+	private BlockPos mineTarget;
+	private Block mineTargetBlock;
+
+	/** Ticks spent sweeping up loot, for the grace period and the give-up timeout. */
+	private int collectTicks;
+
+	/**
+	 * Chest to bank the haul in, or {@code null} when banking is off. Set with {@code /descant chest}.
+	 */
+	private BlockPos depositChest;
+
+	/**
+	 * What the next deposit will hand over.
+	 *
+	 * <p>The automatic trip always banks the haul and keeps the tools, food and building blocks the
+	 * bot needs to carry on working. An <em>ordered</em> deposit is different: being told to stash the
+	 * food means stash the food, and second-guessing that would make the command useless for the one
+	 * case it was asked for. So the filter is a field rather than a constant, and the default is only
+	 * a default.</p>
+	 */
+	private Predicate<ItemStack> depositFilter = InventoryManager::isHaul;
+
+	/** Whether the current chest errand is taking things out rather than putting them in. */
+	private boolean depositTaking;
+
+	/** When taking, how many to come back with; {@code 0} means everything that matches. */
+	private int depositWanted;
+
+	/**
+	 * Whether the chest turned out to have no room for the haul.
+	 *
+	 * <p>Remembered so the automatic trip does not set off again on the very next tick. Without it the
+	 * bot walks to a full chest, fails to put anything in, comes back still full, and immediately
+	 * decides it needs to go to the chest — an errand loop that never ends and never banks anything.</p>
+	 *
+	 * <p>Cleared whenever a chest is chosen or the player asks for a transfer by hand, since both are
+	 * good reasons to look again: chests get emptied, by the bot itself among others.</p>
+	 */
+	private boolean chestFull;
+
+	/** Task parked while the bot runs a deposit errand, restored when it gets back. */
+	private Goal parkedGoal;
+	private BlockPos parkedMineTarget;
+	private Block parkedMineTargetBlock;
+	private boolean depositing;
+
+	/** Sweeping up loot: the goal points at a drop rather than at the journey's destination. */
+	private boolean collecting;
+
+	/** Where the loot should be lying — the broken block, or where the mob fell. */
+	private Vec3 collectAnchor;
+
+	private PathFinder search;
+	private Path path;
+	private int stepIndex;
+	private int breakIndex;
+
+	/**
+	 * The search for the <em>next</em> segment, run while the current one is still being walked.
+	 *
+	 * <p>Separate from {@link #search}, which only runs in {@code PLANNING}. The two are never active
+	 * at once, so the per-tick search budget is never spent twice over.</p>
+	 */
+	private PathFinder lookaheadSearch;
+
+	/**
+	 * A <em>replacement</em> route being searched while the current one is still walked, used when a
+	 * hunted entity moves. Distinct from {@link #lookaheadSearch}, which extends the route rather than
+	 * replacing it; never both at once.
+	 */
+	private PathFinder retargetSearch;
+
+	/**
+	 * Positions of the route the pending replan is replacing, whose cost the search discounts. Captured
+	 * as the old plan is torn down; empty for a journey that is starting fresh.
+	 */
+	private Set<Long> favouredRoute = Set.of();
+
+	/** Consecutive ticks spent drifting off the route, before the plan is given up on. */
+	private int ticksOffPath;
+
+	private int ticksSinceProgress;
+	private int furthestProgress = -1;
+	private double bestGoalDistance = Double.MAX_VALUE;
+	private int fruitlessReplans;
+	private int planFailures;
+	private int cooldown;
+	private int airborneWait;
+
+	public BotController(Consumer<Component> messageSink) {
+		this.messageSink = messageSink;
+	}
+
+	// ---------------------------------------------------------------- public control
+
+	/** Starts navigating to one exact block. Replaces any journey already in progress. */
+	public void navigateTo(BlockPos goal, TravelMode mode) {
+		navigateTo(new GoalBlock(goal), mode);
+	}
+
+	/** Starts pursuing {@code goal}. Replaces any journey already in progress. */
+	public void navigateTo(Goal goal, TravelMode mode) {
+		this.goal = goal;
+		this.travelMode = mode;
+		// TRY_WALK starts out exactly like WALK. The difference only shows up when the journey fails,
+		// which is the earliest moment there is any evidence that walking will not do.
+		boolean building = mode.buildsImmediately();
+		this.allowBreak = building;
+		this.allowPlace = building;
+		this.allowPlaceRequested = building;
+		this.resumeGoal = null;
+		this.planFailures = 0;
+		this.cooldown = 0;
+		this.fruitlessReplans = 0;
+		this.bestGoalDistance = Double.MAX_VALUE;
+		this.collecting = false;
+		this.favouredRoute = Set.of(); // a new journey has no incumbent route to stay loyal to
+		resetPlan(null);
+		this.status = Status.PLANNING;
+	}
+
+	/**
+	 * Hunts down and mines the nearest block of the given kind, repeating until none are left in
+	 * range.
+	 *
+	 * <p>The target position <em>is</em> the ore itself rather than somewhere beside it. Standing
+	 * where the ore is requires breaking it, so the existing tunnel-and-mine machinery does the
+	 * work — no separate mining mode, and it digs its own way in when the ore is buried.</p>
+	 *
+	 * @return whether a block was found to head for
+	 */
+	public boolean huntFor(Minecraft minecraft, LocalPlayer player, Set<Block> family,
+			String displayName, boolean execute, TravelMode mode) {
+		this.huntTravel = mode;
+		BlockPos found = BlockSearcher.findNearest(
+				minecraft.level,
+				BlockPos.containing(player.position()),
+				BotSettings.BLOCK_SEARCH_RADIUS.get(),
+				state -> family.contains(state.getBlock()));
+
+		if (found == null) {
+			huntedBlock = null;
+			huntedFamily = Set.of();
+			message("No " + displayName + " within " + BotSettings.BLOCK_SEARCH_RADIUS.get()
+					+ " blocks of here.");
+			return false;
+		}
+
+		// Always travel to a spot *beside* the block and break it from there, rather than routing
+		// into its space and relying on the path to clear it on the way.
+		//
+		// That indirection is what makes odd-shaped blocks work. A fence has a collision box 1.5
+		// blocks high, so isStandable() reports true and the pathfinder cheerfully plans to step up
+		// onto it instead of mining it — a move the physics will not perform. Mushrooms have no
+		// collision at all and get walked straight through, never broken. Approaching and mining
+		// explicitly sidesteps every one of these shape assumptions.
+		navigateTo(approachGoal(minecraft, player, found), huntTravel);
+
+		// The block actually standing there, not the one that was asked for. Those differ whenever a
+		// family matched a variant — and everything downstream (what counts towards the quota, what
+		// the scaffolding must not spend) is about the block being mined, not the word used for it.
+		Block actual = minecraft.level.getBlockState(found).getBlock();
+
+		this.mineTarget = execute ? found : null;
+		this.mineTargetBlock = execute ? actual : null;
+		this.huntedBlock = execute ? actual : null;
+		this.huntedFamily = execute ? family : Set.of();
+		this.huntedType = null;
+		this.huntedEntity = null;
+		this.huntedName = displayName;
+		this.huntExecute = execute;
+
+		message((execute ? "Mining " : "Heading to ") + displayName + " at " + format(found) + ".");
+		return true;
+	}
+
+	/**
+	 * Places one named block at one named spot, walking there first if need be.
+	 *
+	 * @return a sentence describing what will happen, or {@code null} if it cannot be done — in which
+	 *         case nothing has been started and the caller should say why itself
+	 */
+	public boolean buildAt(Minecraft minecraft, LocalPlayer player, BlockPos target, Item item,
+			TravelMode mode) {
+		this.buildTarget = target.immutable();
+		this.buildItem = item;
+
+		// Already within arm's reach: no point planning a journey to where we are standing. Unless we
+		// are standing in the very spot — see below.
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()
+				&& !occupies(player, target)) {
+			resetPlan(minecraft);
+			placer.beginWith(buildTarget, item);
+			status = Status.PLACING;
+			return true;
+		}
+
+		// Otherwise treat it exactly like a block to be mined: stand somewhere within reach and act
+		// from there, letting the ordinary pathfinder work out how to get to that spot.
+		//
+		// Unlike mining, though, the spot may not be one the bot's own body fills. Minecraft refuses to
+		// place a block into a space an entity occupies, so the only way out from there is to jump and
+		// place underneath — which works outdoors and fails flatly in a cave or a two-high room, where
+		// there is no headroom to jump into. Standing beside it instead makes the ceiling irrelevant.
+		navigateTo(approachGoal(minecraft, player, target, target), mode);
+		return true;
+	}
+
+	/** Whether the player's body is in the way of a block being placed at {@code pos}. */
+	private static boolean occupies(LocalPlayer player, BlockPos pos) {
+		return player.getBoundingBox().intersects(new AABB(pos));
+	}
+
+	/**
+	 * Makes something, walking to a bench first when the recipe needs one.
+	 *
+	 * @param table {@code null} to use the inventory's 2x2 grid, which needs no journey
+	 */
+	public void craft(Minecraft minecraft, LocalPlayer player, RecipeDisplayId recipe, BlockPos table,
+			int count, String name, TravelMode mode) {
+		this.craftRecipe = recipe;
+		this.craftTable = table == null ? null : table.immutable();
+		this.craftCount = count;
+		this.craftName = name;
+
+		boolean here = table == null
+				|| player.getEyePosition().distanceTo(Vec3.atCenterOf(table)) <= BotSettings.REACH.get();
+		if (here) {
+			resetPlan(minecraft);
+			crafter.begin(craftTable, recipe, count);
+			status = Status.CRAFTING;
+			return;
+		}
+		navigateTo(approachGoal(minecraft, player, table), mode);
+	}
+
+	/**
+	 * Smelts something in a furnace, walking there first if it is out of reach.
+	 *
+	 */
+	public void smelt(Minecraft minecraft, LocalPlayer player, BlockPos furnace, Item input,
+			Item fuel, int count, String name, TravelMode mode) {
+		this.smeltFurnace = furnace.immutable();
+		this.smeltInput = input;
+		this.smeltFuel = fuel;
+		this.smeltCount = count;
+		this.smeltName = name;
+
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(furnace)) <= BotSettings.REACH.get()) {
+			resetPlan(minecraft);
+			smelter.begin(furnace, input, fuel, count);
+			status = Status.SMELTING;
+			return;
+		}
+		navigateTo(approachGoal(minecraft, player, furnace), mode);
+	}
+
+	private void tickSmelting(Minecraft minecraft, LocalPlayer player) {
+		switch (smelter.tick(minecraft, player)) {
+			case WORKING -> {
+				// wait for it to burn
+			}
+			case DONE -> finishSmelting(minecraft, "Smelted " + smeltCount + " " + smeltName + ".");
+			case OUT_OF_RANGE -> {
+				smelter.cancel(minecraft);
+				replan(minecraft); // walk back into reach and pick it up again
+			}
+			case NO_MATERIAL, FAILED -> {
+				String why = smelter.problem();
+				smelter.cancel(minecraft);
+				finishSmelting(minecraft, "Couldn't smelt " + smeltName
+						+ (why.isEmpty() ? "." : " — " + why + "."));
+			}
+		}
+	}
+
+	private void finishSmelting(Minecraft minecraft, String reason) {
+		smeltFurnace = null;
+		smeltInput = null;
+		smeltFuel = null;
+		resetPlan(minecraft);
+		status = Status.SUCCEEDED;
+		input.clear();
+		message(reason);
+	}
+
+	/**
+	 * Breaks the block at one exact spot, walking there first.
+	 *
+	 * <p>Reuses the hunt's own approach-and-mine path: stand somewhere within reach, break it, sweep up
+	 * what it dropped. The only difference from hunting a block <em>type</em> is that there is no next
+	 * one to go and find afterwards.</p>
+	 *
+	 * @return whether there was anything there to break
+	 */
+	public boolean mineAt(Minecraft minecraft, LocalPlayer player, BlockPos target, String name,
+			TravelMode mode) {
+		BlockState state = minecraft.level.getBlockState(target);
+		if (state.isAir()) {
+			return false;
+		}
+
+		navigateTo(approachGoal(minecraft, player, target), mode);
+		mineTarget = target.immutable();
+		mineTargetBlock = state.getBlock();
+		digTarget = target.immutable();
+		digName = name;
+
+		// Not a hunt: nothing should go looking for another one of these afterwards.
+		huntedBlock = null;
+		huntedFamily = Set.of();
+		huntedType = null;
+		huntedEntity = null;
+		huntExecute = false;
+		setHuntQuota(0);
+		return true;
+	}
+
+	/** Right-clicks a block, walking to it first if it is out of reach. */
+	public void useBlock(Minecraft minecraft, LocalPlayer player, BlockPos target, TravelMode mode) {
+		this.useTarget = target.immutable();
+		if (player.getEyePosition().distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get()) {
+			rightClick(minecraft, player, useTarget);
+			useTarget = null;
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
+			return;
+		}
+		navigateTo(approachGoal(minecraft, player, target), mode);
+	}
+
+	/**
+	 * Sends one right-click at a block.
+	 *
+	 * <p>Aim is set directly rather than eased, because the click goes out on this same tick and a
+	 * gradual turn would have it land on whatever the bot happened to be facing on the way round.</p>
+	 */
+	private void rightClick(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		Vec3 centre = Vec3.atCenterOf(target);
+		Vec3 eye = player.getEyePosition();
+		player.setYRot(Steering.yawTowards(player.position(), centre));
+		player.setXRot(Steering.pitchTowards(eye, centre));
+
+		Direction face = Direction.getApproximateNearest(
+				eye.x - centre.x, eye.y - centre.y, eye.z - centre.z);
+		if (minecraft.gameMode != null) {
+			minecraft.gameMode.useItemOn(player, InteractionHand.MAIN_HAND,
+					new BlockHitResult(centre, face, target, false));
+			player.swing(InteractionHand.MAIN_HAND);
+		}
+	}
+
+	private void tickCrafting(Minecraft minecraft, LocalPlayer player) {
+		switch (crafter.tick(minecraft, player)) {
+			case WORKING -> {
+				// keep clicking
+			}
+			case DONE -> finishCrafting(minecraft, crafter.made() > 0
+					? "Made " + crafter.made() + " x " + craftName + "."
+					: "Couldn't make " + craftName + " — the ingredients ran out.");
+			case OUT_OF_RANGE -> {
+				crafter.cancel(minecraft);
+				replan(minecraft); // walk back into reach of the bench and try again
+			}
+			case NO_MATERIAL, FAILED -> {
+				crafter.cancel(minecraft);
+				finishCrafting(minecraft, crafter.made() > 0
+						? "Made " + crafter.made() + " x " + craftName + ", then stopped."
+						: "Couldn't craft " + craftName + ".");
+			}
+		}
+	}
+
+	private void finishCrafting(Minecraft minecraft, String reason) {
+		craftRecipe = null;
+		craftTable = null;
+		resetPlan(minecraft);
+		status = Status.SUCCEEDED;
+		input.clear();
+		message(reason);
+	}
+
+	/** Clears a build task without placing anything. */
+	private void finishBuild(Minecraft minecraft, boolean placed, String reason) {
+		buildTarget = null;
+		buildItem = null;
+		placer.cancel();
+		resetPlan(minecraft);
+		status = placed ? Status.SUCCEEDED : Status.FAILED;
+		input.clear();
+		message(reason);
+	}
+
+	/**
+	 * A place to stand while working on {@code target}.
+	 *
+	 * <p>Falls back to the target itself when nothing beside it is standable — a buried ore has no
+	 * free neighbour, and routing into it makes the pathfinder tunnel there, breaking it on the
+	 * way. Both outcomes end with the block mined.</p>
+	 *
+	 * <p>Unless the target is one the bot refuses to break. Then routing into it asks for a cell it
+	 * can never enter and the search rightly reports no route — which is how "go to the furnace"
+	 * became "no route to the furnace" the moment furniture became protected. For those the goal is
+	 * to get <em>near</em> it, which is all standing at a workstation ever meant.</p>
+	 */
+	private Goal approachGoal(Minecraft minecraft, LocalPlayer player, BlockPos target) {
+		return approachGoal(minecraft, player, target, null);
+	}
+
+	/**
+	 * @param keepClear a block the bot's body must not occupy from the chosen spot, or {@code null}.
+	 *                  Placing needs this and mining does not: you cannot put a block into your own
+	 *                  legs, but you can certainly break one you are standing in
+	 */
+	private Goal approachGoal(Minecraft minecraft, LocalPlayer player, BlockPos target,
+			BlockPos keepClear) {
+		WorldView world = new WorldView(minecraft.level);
+		BlockPos from = BlockPos.containing(player.position());
+		int radius = (int) Math.ceil(BotSettings.REACH.get());
+
+		BlockPos best = null;
+		double bestDistance = Double.MAX_VALUE;
+
+		// Anywhere within arm's length will do, not just the six touching blocks. Standing back
+		// means far less digging: a spot four blocks away across open ground beats tunnelling in
+		// to press against the target, and often needs no digging at all.
+		for (int dx = -radius; dx <= radius; dx++) {
+			for (int dy = -radius; dy <= radius; dy++) {
+				for (int dz = -radius; dz <= radius; dz++) {
+					BlockPos candidate = target.offset(dx, dy, dz);
+					if (!world.isKnown(candidate) || !world.canStandAt(candidate)) {
+						continue;
+					}
+					// Never stand on the block we are about to mine — breaking it drops us into the
+					// hole, which is the whole "digs straight down" failure. Beside or above-beside
+					// is fine; directly on top is not.
+					if (candidate.below().equals(target)) {
+						continue;
+					}
+					// Standing feet-in or head-in the spot to be filled. The nearest standing spot to
+					// any airy target is the target itself, so without this the bot picks it almost
+					// every time and then has to jump out of its own way to place.
+					if (keepClear != null
+							&& (candidate.equals(keepClear) || candidate.above().equals(keepClear))) {
+						continue;
+					}
+					if (!withinReach(candidate, target)) {
+						continue;
+					}
+					double distance = candidate.distSqr(from);
+					if (distance >= bestDistance) {
+						continue; // no better than what we have; skip the expensive check
+					}
+					if (!hasLineOfSight(minecraft, player, candidate, target)) {
+						continue; // cannot break what we cannot see
+					}
+					bestDistance = distance;
+					best = candidate;
+				}
+			}
+		}
+		if (best != null) {
+			return new GoalBlock(best);
+		}
+		return WorldView.isProtected(world.state(target))
+				? new GoalNear(target, radius)
+				: new GoalBlock(target);
+	}
+
+	/** View point of a player whose feet are at {@code feet}, for a stance not yet occupied. */
+	private static Vec3 eyeAt(BlockPos feet) {
+		return Vec3.atBottomCenterOf(feet).add(0.0, BotSettings.STANDING_EYE_HEIGHT, 0.0);
+	}
+
+	/** Whether a player standing at {@code feet} would have a clear view of {@code target}. */
+	private static boolean hasLineOfSight(Minecraft minecraft, LocalPlayer player, BlockPos feet,
+			BlockPos target) {
+		Vec3 eye = eyeAt(feet);
+		Vec3 centre = Vec3.atCenterOf(target);
+
+		BlockHitResult hit = minecraft.level.clip(new ClipContext(
+				eye, centre, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, player));
+
+		// Nothing in the way, or the first thing hit is the block we want.
+		return hit.getType() == HitResult.Type.MISS || hit.getBlockPos().equals(target);
+	}
+
+	/** Whether a player standing at {@code feet} could reach {@code target}. */
+	private static boolean withinReach(BlockPos feet, BlockPos target) {
+		return eyeAt(feet).distanceTo(Vec3.atCenterOf(target)) <= BotSettings.REACH.get();
+	}
+
+	/**
+	 * Hunts down the nearest entity of the given type and walks to it.
+	 *
+	 * <p>Reaching a mob puts it inside the combat range, so self-defence takes over and fights it
+	 * — no separate attack mode needed. Passive animals are simply walked up to.</p>
+	 *
+	 * @return whether one was found to head for
+	 */
+	public boolean huntForEntity(Minecraft minecraft, LocalPlayer player, EntityType<?> type,
+			String displayName, boolean execute, TravelMode mode) {
+		this.huntTravel = mode;
+		AABB box = player.getBoundingBox().inflate(BotSettings.ENTITY_SEARCH_RADIUS.get());
+		Entity nearest = null;
+		double nearestDistance = Double.MAX_VALUE;
+
+		for (Entity candidate : minecraft.level.getEntitiesOfClass(Entity.class, box,
+				entity -> entity.isAlive() && entity.getType() == type)) {
+			double distance = candidate.distanceToSqr(player);
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearest = candidate;
+			}
+		}
+
+		if (nearest == null) {
+			huntedType = null;
+			huntedEntity = null;
+			message("No " + displayName + " within " + (int) BotSettings.ENTITY_SEARCH_RADIUS.get()
+					+ " blocks of here.");
+			return false;
+		}
+
+		// Near, not exact. A mob has moved by the time the route is walked, so planning to its precise
+		// block buys a precision that is already wrong — and standing *in* an entity is not a place you
+		// can be anyway. Getting within arm's length is the actual requirement, and close-range pursuit
+		// takes over from there.
+		navigateTo(new GoalNear(BlockPos.containing(nearest.position()), ENTITY_GOAL_RADIUS), huntTravel);
+		huntedBlock = null;
+		huntedFamily = Set.of();
+		huntedType = type;
+		// Hold on to the individual only when hunting it down; otherwise this is a one-off trip to
+		// where it happened to be standing.
+		huntedEntity = execute ? nearest : null;
+		huntedName = displayName;
+		huntExecute = execute;
+
+		message((execute ? "Hunting " : "Heading to ") + displayName + " at " + describeGoal() + ".");
+		return true;
+	}
+
+	/**
+	 * Sets how many to gather before stopping, and resets the count.
+	 *
+	 * <p>Separate from {@link #huntFor} because that is re-entered for every individual target — it is
+	 * how the hunt steps from one ore to the next — so a quota passed to it would be reset to full
+	 * every time one was mined, and the hunt would never end. This is called once, when the hunt is
+	 * ordered.</p>
+	 *
+	 * @param quota how many to gather, or {@code 0} for everything within range
+	 */
+	public void setHuntQuota(int quota) {
+		this.huntQuota = Math.max(0, quota);
+		this.huntTally = 0;
+	}
+
+	/** Progress through the quota, or {@code null} when there is no hunt or no limit. */
+	public String huntProgress() {
+		if (huntQuota <= 0 || (huntedBlock == null && huntedType == null)) {
+			return null;
+		}
+		return huntTally + " of " + huntQuota + " " + huntedName;
+	}
+
+	/**
+	 * Starts breaking a block, noting what it is first.
+	 *
+	 * <p>Every break goes through here so that none of them can quietly escape the hunt's tally. That
+	 * was the bug: asked for six oak logs, the bot mined six as <em>targets</em> but many more as
+	 * obstructions on the way between them — a tree is mostly in its own way — and only the targets
+	 * were counted, so the quota was reached long after the wood was.</p>
+	 */
+	private void beginBreaking(Minecraft minecraft, BlockPos pos) {
+		breakingPos = pos.immutable();
+		breakingBlock = minecraft.level.getBlockState(pos).getBlock();
+		breaker.begin(pos);
+	}
+
+	/**
+	 * Counts a finished break against the quota, if it was one of the things we came for.
+	 *
+	 * @return whether that was the last one needed
+	 */
+	private boolean countBrokenBlock() {
+		// Stop counting the moment the quota is met. Between filling it and the hunt actually ending
+		// there is a whole loot sweep, and the route to the drops may well cut through another of the
+		// same block — which is how "six oak logs" reported seven: the sweep mined one more and the
+		// tally was still listening. The extra block is ordinary path clearing, not part of the order.
+		boolean wanted = huntExecute && !huntedFamily.isEmpty()
+				&& huntedFamily.contains(breakingBlock) && !huntReached;
+		breakingBlock = null;
+		return wanted && tallyOne();
+	}
+
+	/**
+	 * Records one mined block or one killed mob, and says whether that is enough.
+	 *
+	 * @return whether the quota has now been met
+	 */
+	private boolean tallyOne() {
+		huntTally++;
+		return huntQuota > 0 && huntTally >= huntQuota;
+	}
+
+	/**
+	 * Keeps the goal on a moving quarry.
+	 *
+	 * <p>A mob does not wait to be walked to. Pathing once to where it stood arrives at empty
+	 * ground, so the goal is re-pointed whenever the target has wandered far enough to matter.
+	 * Re-planning is skipped while actually in melee — at that range the combat behaviour is
+	 * driving, and replanning every tick would fight it for control.</p>
+	 */
+	private void trackHuntedEntity(Minecraft minecraft) {
+		if (huntedEntity == null) {
+			return;
+		}
+		if (!huntedEntity.isAlive() || huntedEntity.isRemoved()) {
+			Vec3 whereItFell = huntedEntity.position();
+			huntedEntity = null;
+			if (huntExecute) {
+				// We were hunting it down. Sweep up what it dropped, then go after the next one.
+				huntReached = tallyOne();
+				message(huntedName + " down.");
+				beginCollecting(minecraft, whereItFell);
+				return;
+			}
+			message(huntedName + " is gone.");
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
+			return;
+		}
+		if (status == Status.FIGHTING) {
+			return; // in melee; let the fight play out rather than re-planning around it
+		}
+
+		BlockPos where = BlockPos.containing(huntedEntity.position());
+		if (goal == null
+				|| where.distSqr(goal.approximatePosition()) > BotSettings.RETARGET_DISTANCE_SQR.get()) {
+			goal = new GoalNear(where, ENTITY_GOAL_RADIUS);
+			retarget(minecraft);
+		}
+	}
+
+	/**
+	 * Re-aims the route at a target that has moved, <em>without stopping to think</em>.
+	 *
+	 * <p>This is the whole reason chasing used to bypass the pathfinder. An ordinary
+	 * {@link #replan} throws the current route away and stands still in {@code PLANNING} until the
+	 * search finishes — which, against something that is running away, loses ground on every single
+	 * exchange. The old answer was a second control path that steered straight at the quarry and
+	 * ignored routing entirely; it worked on open ground and walked into walls everywhere else.</p>
+	 *
+	 * <p>The better answer is to keep walking the route we have while the replacement is searched in
+	 * the background, then swap. Same machinery as the segment lookahead, aimed at a replacement
+	 * rather than a continuation — so pursuit is now just ordinary path following that happens to be
+	 * re-planned often, and everything the pathfinder can do (round, over, through) still applies.</p>
+	 */
+	private void retarget(Minecraft minecraft) {
+		LocalPlayer player = minecraft.player;
+		// Only worth doing while there is a usable route to keep walking in the meantime.
+		if (player == null || status != Status.FOLLOWING || path == null || stepIndex >= path.size()) {
+			replan(minecraft);
+			return;
+		}
+		if (retargetSearch != null) {
+			return; // one already in flight; let it finish rather than restarting every tick
+		}
+		lookaheadSearch = null; // a continuation of the old route is worthless now
+		retargetSearch = newSearch(minecraft, player, feetPosition(player), favouredPositions());
+	}
+
+	/** Advances the background re-aim search and swaps the route in when it is ready. */
+	private void tickRetarget() {
+		if (retargetSearch == null) {
+			return;
+		}
+		switch (retargetSearch.advance(BotSettings.searchBudgetNanos())) {
+			case SEARCHING -> {
+				// keep chewing next tick, while we walk the old route
+			}
+			case SUCCESS, PARTIAL -> {
+				path = retargetSearch.result();
+				stepIndex = 0;
+				breakIndex = 0;
+				ticksOffPath = 0;
+				// Progress bookkeeping refers to the old route; reset it or the stuck detector fires
+				// immediately on a route it has never seen.
+				furthestProgress = -1;
+				ticksSinceProgress = 0;
+				retargetSearch = null;
+			}
+			case FAILED -> retargetSearch = null; // keep walking the old route; try again next move
+		}
+	}
+
+	/** Stops immediately and releases all keys. */
+	public void stop(Minecraft minecraft) {
+		resetPlan(minecraft);
+		goal = null;
+		huntedBlock = null;
+		huntedFamily = Set.of();
+		huntedType = null;
+		huntedEntity = null;
+		huntQuota = 0;
+		huntTally = 0;
+		huntReached = false;
+		buildTarget = null;
+		buildItem = null;
+		craftRecipe = null;
+		craftTable = null;
+		smeltFurnace = null;
+		useTarget = null;
+		digTarget = null;
+		mineTarget = null;
+		mineTargetBlock = null;
+		collecting = false;
+		status = Status.IDLE;
+		input.clear();
+	}
+
+	public boolean isActive() {
+		return status == Status.PLANNING
+				|| status == Status.FOLLOWING
+				|| status == Status.BREAKING
+				|| status == Status.PLACING
+				|| status == Status.MINING
+				|| status == Status.CRAFTING
+				|| status == Status.SMELTING
+				|| status == Status.COLLECTING
+				|| status == Status.EATING
+				|| status == Status.FIGHTING
+				|| status == Status.DEPOSITING;
+	}
+
+	public BotInput input() {
+		return input;
+	}
+
+	public Status status() {
+		return status;
+	}
+
+	/** A block standing in for the goal, for the in-world marker and the status line. */
+	public BlockPos goal() {
+		return goal == null ? null : goal.approximatePosition();
+	}
+
+	/** The goal in words, for chat. */
+	private String describeGoal() {
+		return goal == null ? "?" : goal.describe();
+	}
+
+	/** Remaining nodes on the current path, for the status display. */
+	public int remainingSteps() {
+		return path == null ? 0 : Math.max(0, path.size() - stepIndex);
+	}
+
+	/**
+	 * The route currently being walked, or {@code null} when there is none.
+	 *
+	 * <p>Read from the render thread. Safe because {@link Path} is immutable once built, so the
+	 * worst case is a frame drawn against the previous path.</p>
+	 */
+	public Path currentPath() {
+		return path;
+	}
+
+	/** Index of the next node to be entered, for highlighting progress. */
+	public int currentStep() {
+		return stepIndex;
+	}
+
+	/** The block being mined right now, or {@code null}. For the in-world display. */
+	public BlockPos activeBreakTarget() {
+		return breaker.target();
+	}
+
+	/** The block being placed right now, or {@code null}. For the in-world display. */
+	public BlockPos activePlaceTarget() {
+		return placer.target();
+	}
+
+	/** The mob currently being hunted, or {@code null}. For the in-world display. */
+	public Entity huntedEntity() {
+		return huntedEntity;
+	}
+
+	/** Short description of what the bot is doing, shown in the world. */
+	public String activityLabel() {
+		// Loot sweeping runs through the ordinary travel states, so the flag has to win over them.
+		if (collecting) {
+			return "collecting";
+		}
+		return switch (status) {
+			case PLANNING -> "planning";
+			case FOLLOWING -> "travelling";
+			case BREAKING, MINING -> "mining";
+			case PLACING -> "building";
+			case COLLECTING -> "collecting";
+			case DEPOSITING -> "depositing";
+			case CRAFTING -> "crafting";
+			case SMELTING -> "smelting";
+			case EATING -> "eating";
+			case FIGHTING -> huntedEntity != null ? "hunting" : "fighting";
+			case SUCCEEDED -> "done";
+			case FAILED -> "failed";
+			case IDLE -> "idle";
+		};
+	}
+
+	public int searchedNodes() {
+		return search == null ? 0 : search.expandedNodes();
+	}
+
+	/**
+	 * Aborts the journey if the human touched a movement key.
+	 *
+	 * <p>Called with the real keyboard state before it is overwritten. Handing control straight
+	 * back on any manual input avoids the worst failure mode of a movement bot — fighting the
+	 * player for control of their own character.</p>
+	 */
+	public void onManualInput(Minecraft minecraft, Input keyboard) {
+		if (!isActive()) {
+			return;
+		}
+		if (keyboard.forward() || keyboard.backward() || keyboard.left() || keyboard.right()
+				|| keyboard.jump()) {
+			stop(minecraft);
+			message("Bot cancelled — manual control resumed.");
+		}
+	}
+
+	// ---------------------------------------------------------------- tick
+
+	public void tick(Minecraft minecraft) {
+		if (!isActive()) {
+			return;
+		}
+		LocalPlayer player = minecraft.player;
+		if (player == null || minecraft.level == null) {
+			stop(minecraft);
+			return;
+		}
+
+		input.clear();
+		doorOpener.tick();
+		trackProgress(minecraft, player);
+		trackHuntedEntity(minecraft);
+		if (!isActive()) {
+			return; // the hunt finished while re-targeting
+		}
+
+		// Survival overrides, most urgent first. These pre-empt the route entirely: arriving dead
+		// is not arriving.
+		//
+		// Checked *before* arrival, deliberately. Standing on the goal is no reason to ignore a
+		// creeper, and on a mob hunt the quarry is by definition right where the goal is — testing
+		// arrival first would declare the hunt complete the moment we caught up with it, instead of
+		// fighting.
+		if (tickSurvival(minecraft, player)) {
+			return;
+		}
+
+		// Inventory full? Bank it before carrying on. Checked after survival, so a fight or a fall is
+		// never interrupted by an errand, and before arrival so it cannot be skipped by reaching the
+		// goal on the same tick.
+		if (beginDepositIfFull(minecraft, player)) {
+			return;
+		}
+
+		// Building gets switched off when the bot runs dry. Nothing used to switch it back on, so
+		// one shortage disabled bridging for the rest of the journey however many blocks were
+		// picked up afterwards. Restore it the moment we are carrying something usable again.
+		if (!allowPlace && allowPlaceRequested
+				&& InventoryManager.hasBuildingBlock(player, huntedBlock)) {
+			allowPlace = true;
+			message("Have blocks again — building back on.");
+			replan(minecraft);
+			return;
+		}
+
+		// Arriving at the goal can happen mid-path (a fall may drop us straight onto it).
+		//
+		// Only while actually travelling, though. Standing on the goal satisfies this test on every
+		// subsequent tick too, so without the status guard succeed() re-runs continuously: it would
+		// cancel and restart the breaker each tick, meaning destroy progress never accumulated and
+		// the block was never mined. Once we are mining or fighting, arrival is old news.
+		boolean travelling = status == Status.PLANNING || status == Status.FOLLOWING;
+		if (travelling && goal != null && withinGoalTolerance(player)) {
+			succeed(minecraft);
+			return;
+		}
+
+		switch (status) {
+			case PLANNING -> tickPlanning(minecraft, player);
+			case FOLLOWING -> tickFollowing(minecraft, player);
+			case BREAKING -> tickBreaking(minecraft, player);
+			case PLACING -> tickPlacing(minecraft, player);
+			case MINING -> tickMining(minecraft, player);
+			case COLLECTING -> tickCollecting(minecraft, player);
+			case DEPOSITING -> tickDepositing(minecraft, player);
+			case CRAFTING -> tickCrafting(minecraft, player);
+			case SMELTING -> tickSmelting(minecraft, player);
+			default -> {
+			}
+		}
+	}
+
+	/**
+	 * Handles the things that will kill the bot mid-route if ignored: a fatal fall, drowning, a mob
+	 * beating on it, starvation.
+	 *
+	 * <p>The first two are Baritone's scope; fighting back and eating are a deliberate superset of it.
+	 * A navigation bot that arrives dead has not arrived, and unlike Baritone this one is expected to
+	 * survive a walk across hostile terrain unattended.</p>
+	 *
+	 * <p>Strictly <em>defensive</em>: it fights what comes within arm's reach and no further. There is
+	 * no chase, no seeking out of targets, and no bypassing of the pathfinder to run at something —
+	 * that mode existed once and is deliberately not coming back.</p>
+	 *
+	 * @return {@code true} when survival took over this tick and the route should not be driven
+	 */
+	private boolean tickSurvival(Minecraft minecraft, LocalPlayer player) {
+		// 1. Running out of air.
+		if (player.isUnderWater() && player.getAirSupply() < BotSettings.AIR_CRITICAL.get()) {
+			releaseInteractions(minecraft, player); // same reason: nothing held while surfacing
+			swimForAir(minecraft, player);
+			return true;
+		}
+
+		// 2. Something hostile within arm's reach. A threat owns the whole tick: fighting and stopping
+		// to eat are mutually exclusive, and arbitrating them every tick off a health threshold that
+		// jitters as hits land is exactly what made the bot dither — shield half-raised from an
+		// abandoned eat while it stood there deciding. So a threat first cancels any eat in progress
+		// (releasing the use key, which is what was raising the shield), then hands the tick to combat,
+		// which blocks and strikes as one coherent behaviour.
+		//
+		// Deliberately not gated on low health. Standing still eating next to a mob that is hitting you
+		// is strictly worse than fighting it off: you take the hits either way, and only one of the two
+		// removes the threat.
+		// 2a. Something already in the air. A fireball two blocks out is more urgent than the zombie
+		// beside us, because the zombie will still be there afterwards and the fireball will not — so a
+		// swat outranks the melee. Blocking does not: an arrow soaked on the shield while something is
+		// hitting us in the face is the wrong trade, and the melee below raises the shield anyway.
+		Threats.Incoming incoming = Threats.incoming(minecraft, player);
+		if (incoming != null && incoming.answer() == Threats.Answer.SWAT) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			status = Status.FIGHTING;
+			if (combat.tickProjectile(minecraft, player, input, incoming) != ActionState.WORKING) {
+				combat.cancel(minecraft, player);
+				status = Status.FOLLOWING;
+			}
+			return true;
+		}
+
+		LivingEntity threat = CombatAction.findThreat(minecraft, player);
+		if (threat != null) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			status = Status.FIGHTING;
+			if (combat.tick(minecraft, player, input, threat) != ActionState.WORKING) {
+				combat.cancel(minecraft, player);
+				status = Status.FOLLOWING;
+			}
+			return true;
+		}
+		// 2b. Nothing in reach, but something is on its way. Stand and take it on the shield rather
+		// than walking on and taking it in the back.
+		if (incoming != null) {
+			if (status == Status.EATING) {
+				eater.cancel(minecraft);
+			}
+			if (combat.tickProjectile(minecraft, player, input, incoming) == ActionState.WORKING) {
+				status = Status.FIGHTING;
+				return true;
+			}
+			// No shield to hide behind, so there is nothing to stop for. Carry on and hope.
+			combat.cancel(minecraft, player);
+		}
+
+		// Nothing attacking us — but we may be the ones doing the attacking.
+		if (engageQuarry(minecraft, player)) {
+			return true;
+		}
+		if (status == Status.FIGHTING) {
+			combat.cancel(minecraft, player); // threat gone or fled; drop the shield and carry on
+			status = Status.FOLLOWING;
+		}
+
+		// 3. Hunger and healing. Only reached when nothing hostile is near, so eating never overlaps a
+		// fight. Only worth stopping for between path actions, never mid-mine.
+		if (status == Status.EATING) {
+			tickEating(minecraft, player);
+			return true;
+		}
+		if ((status == Status.FOLLOWING || status == Status.PLANNING)
+				&& player.onGround() && EatAction.shouldEat(player)) {
+			eater.begin();
+			status = Status.EATING;
+			tickEating(minecraft, player);
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Attacks the hunted quarry once the route has brought us within reach.
+	 *
+	 * <p>The offensive half of combat, and deliberately the <em>only</em> offensive part: it strikes
+	 * what is already in front of it and never decides where to go. Closing the distance is the
+	 * pathfinder's job, kept up to date by {@link #retarget}. A hunt on a passive animal needs this
+	 * because self-defence alone would never fire — a pig will not attack, so waiting to be threatened
+	 * means standing next to it forever.</p>
+	 *
+	 * @return whether the fight took the tick
+	 */
+	private boolean engageQuarry(Minecraft minecraft, LocalPlayer player) {
+		if (!huntExecute || !(huntedEntity instanceof LivingEntity quarry) || !quarry.isAlive()) {
+			return false;
+		}
+		if (quarry.distanceTo(player) > BotSettings.COMBAT_ENGAGE_RANGE.get()) {
+			return false; // not in reach yet; keep walking
+		}
+		if (status == Status.EATING) {
+			eater.cancel(minecraft);
+		}
+		status = Status.FIGHTING;
+		combat.tick(minecraft, player, input, quarry);
+		return true;
+	}
+
+	/**
+	 * Releases any interaction holding the use key down — an eat in progress, or a raised shield.
+	 *
+	 * <p>Both {@link EatAction} and {@link CombatAction} keep {@code keyUse} pressed across ticks, so
+	 * whenever a higher-priority behaviour takes the tick from them it must call this first. Otherwise
+	 * the key stays held and drives whatever reaches the main hand next. Both cancels are idempotent,
+	 * so calling it when nothing is held is harmless.</p>
+	 */
+	private void releaseInteractions(Minecraft minecraft, LocalPlayer player) {
+		eater.cancel(minecraft);
+		combat.cancel(minecraft, player);
+	}
+
+	private void tickEating(Minecraft minecraft, LocalPlayer player) {
+		switch (eater.tick(minecraft, player, input)) {
+			case WORKING -> {
+				// keep holding the item
+			}
+			case NO_MATERIAL -> {
+				eater.cancel(minecraft);
+				fetchNearby(minecraft, player, InventoryManager::isFood, "food");
+				replan(minecraft);
+			}
+			case DONE, FAILED -> {
+				eater.cancel(minecraft);
+				// Resume by replanning, so we pick up from wherever we actually stand.
+				replan(minecraft);
+			}
+		}
+	}
+
+	/**
+	 * Heads for the nearest breathable space.
+	 *
+	 * <p>Straight up is only right in open water: under an overhang it presses the player into the
+	 * ceiling until they drown. Searching for the actual nearest air lets the bot swim sideways out
+	 * from under an obstruction, and falls back to surfacing only when nothing is found.</p>
+	 */
+	private void swimForAir(Minecraft minecraft, LocalPlayer player) {
+		input.forward(false).backward(false).left(false).right(false).sprint(false);
+
+		BlockPos air = AirFinder.findNearestBreathable(
+				new WorldView(minecraft.level),
+				BlockPos.containing(player.position()),
+				BotSettings.AIR_SEARCH_NODES.get());
+
+		if (air == null) {
+			input.jump(true); // nothing found in range; upward is the best remaining guess
+			return;
+		}
+
+		Vec3 target = Vec3.atBottomCenterOf(air);
+		float desiredYaw = Steering.yawTowards(player.position(), target);
+		player.setYRot(Steering.approach(player.getYRot(), desiredYaw));
+		// Swimming follows the view direction, so the pitch is what actually drives us upward.
+		player.setXRot(Steering.approach(player.getXRot(),
+				Steering.pitchTowards(player.getEyePosition(), target)));
+
+		input.forward(true);
+		input.jump(target.y > player.getY() + 0.2);
+	}
+
+	// ---------------------------------------------------------------- banking the haul
+
+	/** Remembers a chest to empty the haul into, or clears it when {@code chest} is {@code null}. */
+	public void setDepositChest(BlockPos chest) {
+		this.depositChest = chest == null ? null : chest.immutable();
+		this.chestFull = false; // a newly chosen chest has not been tried yet
+	}
+
+	public BlockPos depositChest() {
+		return depositChest;
+	}
+
+	/** Whether the chest was found to have no room. Reported by {@code status}, so the AI can see it. */
+	public boolean chestFull() {
+		return chestFull;
+	}
+
+	/** The chest being emptied right now, or {@code null}. For the in-world display. */
+	public BlockPos activeDepositTarget() {
+		return transfer.target();
+	}
+
+	/**
+	 * Breaks off to bank the haul when the inventory has filled up, parking whatever we were doing.
+	 *
+	 * <p>Without this a mining run quietly stops being productive: the bot keeps breaking blocks whose
+	 * drops it can no longer pick up, and the longer it runs the less it has to show for it. The task
+	 * is parked rather than abandoned, so the trip is an interruption and not an ending.</p>
+	 *
+	 * @return whether a deposit trip was started
+	 */
+	private boolean beginDepositIfFull(Minecraft minecraft, LocalPlayer player) {
+		if (depositChest == null || depositing || collecting) {
+			return false; // no chest set, already going, or mid-sweep — finish that first
+		}
+		// Only interrupt real work. A plain journey should reach where it was sent, full or not.
+		if (mineTarget == null && huntedEntity == null) {
+			return false;
+		}
+		if (InventoryManager.fullness(player) < BotSettings.DEPOSIT_FULLNESS.get()
+				|| !InventoryManager.hasHaul(player)) {
+			return false;
+		}
+		if (chestFull) {
+			// Full pack, full chest: there is nowhere for anything to go. Carrying on would mean
+			// breaking blocks whose drops cannot be picked up, which is the exact waste this trip
+			// exists to prevent — so end the job honestly instead of running on producing nothing.
+			message("Inventory full and the chest at " + format(depositChest)
+					+ " has no room either. Stopping — empty the chest, or set another with chest.");
+			stop(minecraft);
+			return true;
+		}
+
+		depositFilter = InventoryManager::isHaul; // the automatic trip never gives away the kit
+		depositTaking = false;
+		depositWanted = 0;
+		beginDeposit(minecraft, "Inventory full — banking the haul at " + format(depositChest) + ".");
+		return true;
+	}
+
+	/**
+	 * Parks whatever is in progress and heads for the chest.
+	 *
+	 * <p>Shared by the automatic trip and the on-demand one, so that a deposit asked for by hand parks
+	 * and restores the current job exactly the way a full inventory does.</p>
+	 */
+	private void beginDeposit(Minecraft minecraft, String reason) {
+		depositing = true;
+		parkedGoal = goal;
+		parkedMineTarget = mineTarget;
+		parkedMineTargetBlock = mineTargetBlock;
+		mineTarget = null;
+		mineTargetBlock = null;
+
+		// Stand next to the chest, not on it. Anywhere within arm's reach will do.
+		goal = new GoalNear(depositChest, (int) BotSettings.REACH.get() - 1);
+		message(reason);
+		replan(minecraft);
+	}
+
+	/**
+	 * Goes and banks the haul now, whether or not the inventory is full.
+	 *
+	 * @return why it cannot, or {@code null} once the trip has started
+	 */
+	public String depositNow(Minecraft minecraft, LocalPlayer player,
+			Predicate<ItemStack> what, String describe) {
+		if (depositChest == null) {
+			return "No chest set. Use chest to pick one first.";
+		}
+		if (depositing) {
+			return "Already on the way to the chest.";
+		}
+		if (!InventoryManager.has(player, what)) {
+			return "Nothing to bank: no " + describe + " is being carried.";
+		}
+		depositFilter = what;
+		depositTaking = false;
+		depositWanted = 0;
+		// Asked for by hand, so try again even if it was full last time — the usual reason someone
+		// orders a deposit after being told the chest is full is that they have just emptied it.
+		chestFull = false;
+		beginDeposit(minecraft, "Taking " + describe + " to the chest at " + format(depositChest) + ".");
+		return null;
+	}
+
+	/**
+	 * Fetches things back out of the chest.
+	 *
+	 * <p>The mirror of {@link #depositNow}, and it shares the whole errand — parking the current job,
+	 * walking over, and picking the job back up afterwards — because from the bot's point of view a
+	 * trip to the chest is a trip to the chest whichever way the items end up going.</p>
+	 *
+	 * <p>Nothing can be checked in advance: what is in a chest is unknown until it is open. So this
+	 * always sets off, and coming back with nothing is a legitimate outcome rather than a failure.</p>
+	 *
+	 * @param count stop once the inventory holds this many, or {@code 0} for everything that matches
+	 * @return why it cannot, or {@code null} once the trip has started
+	 */
+	public String withdrawNow(Minecraft minecraft, Predicate<ItemStack> what, String describe,
+			int count) {
+		if (depositChest == null) {
+			return "No chest set. Use chest to pick one first.";
+		}
+		if (depositing) {
+			return "Already on the way to the chest.";
+		}
+		depositFilter = what;
+		depositTaking = true;
+		depositWanted = Math.max(0, count);
+		// Taking things out makes room in the chest, so whatever it was last time is now stale.
+		chestFull = false;
+		beginDeposit(minecraft, "Fetching " + describe + " from the chest at "
+				+ format(depositChest) + ".");
+		return null;
+	}
+
+	private void tickDepositing(Minecraft minecraft, LocalPlayer player) {
+		switch (transfer.tick(minecraft, player)) {
+			case WORKING -> {
+				// keep transferring
+			}
+			case DONE -> finishDeposit(minecraft, true);
+			case NO_ROOM -> {
+				transfer.cancel(minecraft);
+				// The chest is kept: it is full, not broken, and forgetting it would mean the player
+				// has to set it again after emptying it. Some of the haul may well have gone across
+				// before the space ran out, so this is not necessarily a wasted trip.
+				// Only when putting in. A take that fills the *inventory* says nothing about the chest,
+				// and recording it as a full chest would make the next gathering job stop dead blaming
+				// a chest that has plenty of room.
+				chestFull = !depositTaking;
+				message(depositTaking
+						? "No room in the inventory for any more."
+						: "The chest at " + format(depositChest) + " is full.");
+				finishDeposit(minecraft, false);
+			}
+			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
+				transfer.cancel(minecraft);
+				// Could not reach or open it. Give up on banking rather than stalling the whole task —
+				// a chest that has been broken or walled in must not end the mining run.
+				message("Couldn't use the chest — carrying on without it.");
+				depositChest = null;
+				finishDeposit(minecraft, false);
+			}
+		}
+	}
+
+	/** Restores the task the deposit trip interrupted. */
+	private void finishDeposit(Minecraft minecraft, boolean banked) {
+		if (banked) {
+			message(depositTaking ? "Collected." : "Stashed.");
+		}
+		depositing = false;
+		depositFilter = InventoryManager::isHaul; // back to the safe default for the next trip
+		depositTaking = false;
+		depositWanted = 0;
+		goal = parkedGoal;
+		mineTarget = parkedMineTarget;
+		mineTargetBlock = parkedMineTargetBlock;
+		parkedGoal = null;
+		parkedMineTarget = null;
+		parkedMineTargetBlock = null;
+
+		if (goal == null) {
+			// Nothing to go back to — the hunt will pick its own next target.
+			continueHunt(minecraft);
+			return;
+		}
+		replan(minecraft);
+	}
+
+	private void tickPlanning(Minecraft minecraft, LocalPlayer player) {
+		if (cooldown > 0) {
+			cooldown--;
+			return;
+		}
+
+		// Never start a search from mid-air. The entity position is at the feet, so at the top of a
+		// jump it floors to a block one higher than the ground — the search then plans from that
+		// phantom block, and once we land the path's first node sits a block above us and reads as a
+		// 2-block climb we can never make. Wait to touch down (holding still so we land where we
+		// are) before planning; a long committed fall falls through the timeout and plans anyway.
+		if (search == null && !player.onGround() && !player.isInWater()) {
+			input.forward(false).backward(false).left(false).right(false).sprint(false).jump(false);
+			if (++airborneWait < BotSettings.AIRBORNE_PLAN_WAIT.get()) {
+				return;
+			}
+		}
+		airborneWait = 0;
+
+		if (search == null) {
+			search = newSearch(minecraft, player, planStart(minecraft, player), favouredRoute);
+		}
+
+		PathFinder.State result = search.advance(BotSettings.searchBudgetNanos());
+		switch (result) {
+			case SEARCHING -> {
+				// keep chewing next tick
+			}
+			case SUCCESS, PARTIAL -> {
+				path = search.result();
+				search = null;
+				stepIndex = 0;
+				breakIndex = 0;
+				planFailures = 0;
+				status = Status.FOLLOWING;
+			}
+			case FAILED -> {
+				search = null;
+				if (++planFailures < BotSettings.MAX_REPLAN_FAILURES.get()) {
+					cooldown = REPLAN_COOLDOWN_TICKS;
+				} else if (collecting) {
+					abandonCollecting(minecraft); // no route to the loot; it is not worth failing over
+				} else {
+					fail(minecraft, "No route to " + describeGoal() + ".");
+				}
+			}
+		}
+	}
+
+	private void tickFollowing(Minecraft minecraft, LocalPlayer player) {
+		if (path == null || path.isEmpty()) {
+			replan(minecraft);
+			return;
+		}
+
+		// Advance progress to wherever we have actually got to. Note what stepIndex means: the next
+		// node still to be *entered*, never the node we are standing on. Any mining or building that
+		// node requires must happen before we move into it.
+		int advanced = advanceProgress(minecraft, player);
+		if (advanced != stepIndex) {
+			stepIndex = advanced;
+			breakIndex = 0;
+		}
+
+		if (stepIndex >= path.size()) {
+			// Whole path walked. A partial path means there is more journey left to plan.
+			if (path.reachesGoal()) {
+				succeed(minecraft);
+			} else {
+				replan(minecraft);
+			}
+			return;
+		}
+
+		// Re-aim at a moving target, and plan the continuation of a partial route — both while walking,
+		// so neither ever means standing still to think.
+		tickRetarget();
+		if (retargetSearch == null) {
+			tickLookahead(minecraft, player);
+		}
+
+		Path.Step next = path.step(stepIndex);
+
+		// Hunger can drop while a route is being walked, and the route was planned by something that
+		// asked once at the start. A jump that needed a sprint when it was planned is a fall now, so
+		// the plan is thrown away rather than flown — the replan is told what the bot can do and comes
+		// back with something walkable.
+		if (next.parkour() && needsSprint(next) && !canSprint(player)) {
+			message("Too hungry to sprint, so that jump is off — finding another way round.");
+			replan(minecraft);
+			return;
+		}
+
+		// Genuinely off-route: shoved by a mob, fell, or the terrain was not what we planned for.
+		// A parkour jump is exempt: the whole point is to be airborne several blocks from both ends of
+		// the movement, which would trip this every time. A missed jump instead stops making progress
+		// and is caught by the stuck detector, which replans.
+		if (!next.parkour() && isOffPath(player, next)) {
+			replan(minecraft);
+			return;
+		}
+
+		if (breakIndex < next.toBreak().size()) {
+			BlockPos blocking = next.toBreak().get(breakIndex);
+			if (minecraft.level.getBlockState(blocking).isAir()) {
+				breakIndex++; // already gone — someone else mined it, or it was a plant
+			} else {
+				beginBreaking(minecraft, blocking);
+				status = Status.BREAKING;
+			}
+			return;
+		}
+
+		if (next.toPlace() != null && needsFilling(minecraft, next.toPlace())) {
+			// Spend the block we are out here collecting on our own scaffolding: on a hunt we
+			// accumulate a lot of it, so it is the cheapest thing to build with.
+			placer.begin(next.toPlace(), huntedBlock);
+			status = Status.PLACING;
+			return;
+		}
+
+		if (next.parkour()) {
+			driveParkour(player, next);
+			return;
+		}
+
+		if (isClimbing(minecraft, next)) {
+			driveClimb(minecraft, player, next);
+			return;
+		}
+
+		// A shut door on the way. The planner counted it as passable on the promise that we would open
+		// it, so this is where that promise is kept — one click in passing, without stopping the walk.
+		openDoorAhead(minecraft, player, next);
+
+		// Steer at the furthest node reachable in a straight walkable line, not at the next one. This
+		// only changes what we aim at, never where we think we are. Removing it to match Baritone was a
+		// mistake: Baritone applies its rotations at full rate, we ease ours, and easing towards a
+		// target one block away means still turning on arrival — so the bot turned at every node and
+		// walking became stop-start.
+		int target = PathSmoother.furthestReachable(
+				new WorldView(minecraft.level), player.position(), path, stepIndex);
+		walkTowards(minecraft, player, path.step(target));
+	}
+
+	/**
+	 * Plans the next segment of a partial route while the current one is still being walked, and
+	 * splices it on when it is ready.
+	 *
+	 * <p>A search only ever produces a route through terrain the client has actually loaded, so a long
+	 * journey is necessarily a chain of segments. Planning each one only on arriving at the end of the
+	 * last meant a visible stall every time — the bot stopping dead, thinking, then setting off again.
+	 * Overlapping the search with the walk removes the stall without changing the route: the
+	 * continuation is searched from where this segment ends, so it joins on seamlessly.</p>
+	 */
+	private void tickLookahead(Minecraft minecraft, LocalPlayer player) {
+		if (lookaheadSearch == null) {
+			if (path.reachesGoal() || goal == null) {
+				return; // this route already arrives; there is no continuation to plan
+			}
+			if (path.remainingTicks(stepIndex) > BotSettings.PLANNING_TICK_LOOKAHEAD.get()) {
+				return; // plenty of route left; no need to think about the next segment yet
+			}
+			BlockPos from = path.destination();
+			if (from == null) {
+				return;
+			}
+			// No favouring here: a continuation is searched from beyond the end of the current route,
+			// so there is no incumbent course through that terrain to stay loyal to.
+			lookaheadSearch = newSearch(minecraft, player, from, Set.of());
+		}
+
+		switch (lookaheadSearch.advance(BotSettings.searchBudgetNanos())) {
+			case SEARCHING -> {
+				// keep chewing next tick, while we walk
+			}
+			case SUCCESS, PARTIAL -> {
+				path = path.concat(lookaheadSearch.result());
+				lookaheadSearch = null;
+			}
+			case FAILED -> {
+				// Nothing beyond here yet — most often because the chunks out there are still loading.
+				// Drop it and let the ordinary end-of-path replan try again from closer up, by which
+				// point the terrain will usually have arrived.
+				lookaheadSearch = null;
+			}
+		}
+	}
+
+	/** Builds a search from {@code from} to the current goal. */
+	private PathFinder newSearch(Minecraft minecraft, LocalPlayer player, BlockPos from,
+			Set<Long> favoured) {
+		return new PathFinder(
+				new WorldView(minecraft.level),
+				from,
+				goal,
+				InventoryManager.snapshot(player),
+				allowBreak,
+				allowPlace,
+				allowParkour,
+				canSprint(player),
+				favoured);
+	}
+
+	/**
+	 * Whether the bot can sprint at all right now.
+	 *
+	 * <p>Vanilla's own rule, asked of vanilla rather than re-derived: hunger above 6, or the ability to
+	 * fly. Hardcoding the 6 here would be a second copy of a number that belongs to the game.</p>
+	 *
+	 * <p>It matters well beyond speed. A sprint-jump carries about four blocks and a walking one about
+	 * two, so losing the sprint does not make a long jump slower — it makes it a fall. Everything that
+	 * plans or flies a jump asks this first.</p>
+	 */
+	public static boolean canSprint(LocalPlayer player) {
+		return player.getFoodData().hasEnoughFood() || player.getAbilities().mayfly;
+	}
+
+	/**
+	 * Snapshots the route currently being walked, so the search that replaces it can be biased towards
+	 * staying on it. Taken before the plan is torn down, which is the only moment it still exists.
+	 */
+	private Set<Long> favouredPositions() {
+		if (path == null) {
+			return Set.of();
+		}
+		Set<Long> positions = new HashSet<>(path.size());
+		for (int index = 0; index < path.size(); index++) {
+			positions.add(path.step(index).pos().asLong());
+		}
+		return positions;
+	}
+
+	/**
+	 * Whether the player has strayed from the route far enough to throw the plan away.
+	 *
+	 * <p>Distance is measured to <em>either end</em> of the movement in progress, so being halfway
+	 * along it never reads as being lost. Mild drift is tolerated for a while rather than replanned on
+	 * the first tick: a shove from a mob or a clipped corner corrects itself, and replanning instantly
+	 * turns a wobble into a stutter that never recovers.</p>
+	 */
+	private boolean isOffPath(LocalPlayer player, Path.Step step) {
+		Vec3 position = player.position();
+		double distance = Math.min(
+				position.distanceTo(Vec3.atBottomCenterOf(step.pos())),
+				position.distanceTo(Vec3.atBottomCenterOf(step.from())));
+
+		if (distance > BotSettings.PATH_ABANDON_DISTANCE.get()) {
+			ticksOffPath = 0;
+			return true;
+		}
+		if (distance > BotSettings.PATH_DRIFT_DISTANCE.get()) {
+			return ++ticksOffPath > BotSettings.MAX_TICKS_OFF_PATH.get();
+		}
+		ticksOffPath = 0;
+		return false;
+	}
+
+	/** Distance of the nearest jump within the next {@code window} steps, or {@code 0}. */
+	private int parkourWithin(int window) {
+		int limit = Math.min(path.size(), stepIndex + window);
+		for (int index = stepIndex; index < limit; index++) {
+			int distance = path.step(index).parkourDistance();
+			if (distance > 0) {
+				return distance;
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * Drives a running jump, following Baritone's {@code MovementParkour} state machine.
+	 *
+	 * <p>Three things make this land reliably where the previous attempt did not, and all three come
+	 * from knowing the movement's <em>source</em> as well as its destination:</p>
+	 * <ul>
+	 *   <li><b>The launch is positional, not timed.</b> The jump fires on the tick the player's centre
+	 *   crosses the far face of the launch block — the moment the body is still supported by that
+	 *   block's corner but has nothing else ahead of it. That is the furthest-reaching point to leave
+	 *   from, and because it is a place rather than an elapsed time it holds at any approach speed.
+	 *   The old "fraction of the way through the block" trigger had to be tuned per distance, and was
+	 *   wrong for every speed it was not tuned at.</li>
+	 *   <li><b>Power matches the gap.</b> Sprint only for the longest jump; everything shorter is a
+	 *   walking jump. A sprint carries about four blocks, so sprinting a short gap flies past the
+	 *   landing entirely.</li>
+	 *   <li><b>There is a run-up.</b> Arriving at the launch block sideways leaves no speed in the jump
+	 *   direction, and a jump from a standstill drops short however well it is timed. Rather than jump
+	 *   anyway, the bot backs off one block behind the launch block and comes at it straight.</li>
+	 * </ul>
+	 *
+	 * <p>There is deliberately no landing brake. Braking existed to rescue overshoots caused by the
+	 * two problems above; with the launch point and the power right, the jump lands on the block, and
+	 * a brake would only rob the next jump of the momentum it needs to chain.</p>
+	 */
+	/**
+	 * Whether this jump can only be made at a sprint.
+	 *
+	 * <p>The long ones, and every ascending one whatever its length — an ascending jump spends part of
+	 * its arc climbing, so it needs the speed to still reach. One definition, read by the planner
+	 * deciding whether to generate the movement and by the executor deciding how to fly it; two
+	 * copies of this rule drifting apart is how a bot plans a jump it then refuses to power.</p>
+	 */
+	private static boolean needsSprint(Path.Step jump) {
+		return jump.parkourDistance() >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get()
+				|| jump.parkourAscend();
+	}
+
+	private void driveParkour(LocalPlayer player, Path.Step jump) {
+		BlockPos from = jump.from();
+		BlockPos destination = jump.pos();
+		BlockPos direction = jump.direction();
+
+		boolean sprint = needsSprint(jump);
+
+		if (!player.onGround()) {
+			// Committed to the arc. Horizontal velocity is already fixed; keep holding jump while
+			// rising (releasing early cuts the height short) and keep facing the landing.
+			input.jump(player.getDeltaMovement().y > 0.0);
+			aimAndRun(player, destination, sprint);
+			return;
+		}
+
+		BlockPos feet = feetPosition(player);
+
+		// Off the launch line entirely — approached from the side, or knocked about. Back up one block
+		// behind the launch block so the approach is straight, then run at it. This is the run-up, and
+		// it is the piece that was missing: without it, a jump planned from a corner launched with
+		// almost no speed in the jump direction and fell into the gap every time.
+		if (!feet.equals(from) && !feet.equals(destination)
+				&& !feet.equals(from.offset(direction.getX(), 0, direction.getZ()))) {
+			BlockPos runUp = from.subtract(direction);
+			aimAndRun(player, feet.equals(runUp) ? from : runUp, false);
+			return;
+		}
+
+		input.jump(atLaunchLip(player, from, direction));
+		aimAndRun(player, destination, sprint);
+	}
+
+	/**
+	 * Whether the player's centre has reached — or will reach during this tick — the far face of the
+	 * launch block.
+	 *
+	 * <p>Worked out in continuous space from position plus velocity rather than from the feet block
+	 * coordinate, because the controller runs before the physics update: testing the block coordinate
+	 * alone notices the crossing a tick late, by which point only a sliver of the launch block is
+	 * still under the player and the jump may not register at all.</p>
+	 */
+	private static boolean atLaunchLip(LocalPlayer player, BlockPos from, BlockPos direction) {
+		boolean alongX = direction.getX() != 0;
+		int sign = alongX ? direction.getX() : direction.getZ();
+		double position = alongX ? player.getX() : player.getZ();
+		double velocity = alongX ? player.getDeltaMovement().x : player.getDeltaMovement().z;
+		double base = alongX ? from.getX() : from.getZ();
+
+		double predicted = position + velocity;
+		// How far through the launch block we will be, measured along the direction of travel, where
+		// 1.0 is the far face.
+		double progress = sign > 0 ? predicted - base : (base + 1.0) - predicted;
+		return progress >= 1.0;
+	}
+
+	/**
+	 * Opens a shut door or gate blocking this step, at feet or head height.
+	 *
+	 * <p>Both levels are checked because a door occupies two blocks and the route may aim at either
+	 * half depending on where the floor is.</p>
+	 */
+	private void openDoorAhead(Minecraft minecraft, LocalPlayer player, Path.Step step) {
+		if (doorOpener.open(minecraft, player, step.pos())) {
+			return;
+		}
+		doorOpener.open(minecraft, player, step.pos().above());
+	}
+
+	/** Whether this step goes straight up or down a ladder or vine. */
+	private boolean isClimbing(Minecraft minecraft, Path.Step step) {
+		if (step.pos().getX() != step.from().getX() || step.pos().getZ() != step.from().getZ()) {
+			return false; // not a vertical move
+		}
+		WorldView world = new WorldView(minecraft.level);
+		return world.isClimbable(step.from()) || world.isClimbable(step.pos());
+	}
+
+	/**
+	 * Climbs a ladder or vine.
+	 *
+	 * <p>Minecraft has no climb key: you go up a ladder by <em>walking into it</em>, which means facing
+	 * the wall it is fixed to and holding forward. So this faces the ladder's backing block rather than
+	 * the destination — steering at the destination would mean aiming straight up, which yields no
+	 * usable heading at all and just spins the view.</p>
+	 *
+	 * <p>Descending is the same grip with forward released: the player slides down under gravity while
+	 * still attached. Sneak holds position on the ladder, so it is deliberately never pressed here.</p>
+	 */
+	private void driveClimb(Minecraft minecraft, LocalPlayer player, Path.Step step) {
+		boolean ascending = step.pos().getY() > step.from().getY();
+		WorldView world = new WorldView(minecraft.level);
+
+		// The wall the ladder hangs on. Face that, not the ladder cell itself, or "forward" points
+		// along the shaft instead of into it and the player never grips.
+		BlockPos ladder = ascending ? step.from() : step.pos();
+		BlockPos backing = climbBacking(world, ladder);
+
+		Vec3 facing = backing != null
+				? Vec3.atCenterOf(backing)
+				: Vec3.atBottomCenterOf(ladder); // vine with no backing found; press into its own cell
+		float desiredYaw = Steering.yawTowards(player.position(), facing);
+		player.setYRot(Steering.approach(player.getYRot(), desiredYaw));
+		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
+
+		input.sprint(false).sneak(false);
+		input.forward(ascending);
+		// A ladder that starts one block up needs a hop to reach the first rung; on the ladder itself
+		// holding forward is enough and jumping only breaks the grip.
+		input.jump(ascending && player.onGround() && !world.isClimbable(feetPosition(player)));
+	}
+
+	/** The solid block a ladder is fixed to, so the bot knows which way to press. */
+	private static BlockPos climbBacking(WorldView world, BlockPos ladder) {
+		for (Direction dir : new Direction[] {
+				Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST }) {
+			BlockPos neighbour = ladder.relative(dir);
+			if (world.isKnown(neighbour) && world.isStandable(neighbour)) {
+				return neighbour;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Baritone's {@code moveTowards}: face the centre of a block and hold forward.
+	 *
+	 * <p>Yaw snaps rather than easing. A jump is an aimed action whose whole trajectory is fixed the
+	 * instant the player leaves the ground, so there is no time to turn into the heading — unlike
+	 * ordinary walking, where easing is what keeps the bot from cutting corners.</p>
+	 */
+	private void aimAndRun(LocalPlayer player, BlockPos target, boolean sprint) {
+		Vec3 centre = Vec3.atBottomCenterOf(target);
+		float desiredYaw = Steering.yawTowards(player.position(), centre);
+		player.setYRot(Steering.approach(player.getYRot(), desiredYaw));
+		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
+
+		float yawError = Steering.angleDifference(player.getYRot(), desiredYaw);
+		input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE.getFloat());
+		input.sprint(sprint && !player.isInWater() && yawError < BotSettings.SPRINT_ANGLE_THRESHOLD.getFloat());
+	}
+
+	/**
+	 * How far along the route the player has actually got, searching forward only.
+	 *
+	 * <p>Projection onto the route, <em>not</em> an exact "am I standing on this node?" test. The exact
+	 * test is Baritone's, and it is correct there because Baritone walks through every node; with
+	 * smoothing back the bot deliberately cuts past intermediate nodes without ever coming near them,
+	 * and an exact test would sit waiting for an arrival that never happens. The two are a matched
+	 * pair — swapping one without the other is what stalled progress mid-route.</p>
+	 *
+	 * <p>An exact feet-block match is still honoured first, since when it does hold it is unambiguous
+	 * and lets a fall or a shove that skipped several nodes be picked up cleanly.</p>
+	 *
+	 * <p>Forward-only, so being pushed backwards shows up as a growing distance and trips the off-path
+	 * check rather than silently rewinding our progress.</p>
+	 */
+	private int advanceProgress(Minecraft minecraft, LocalPlayer player) {
+		BlockPos feet = feetPosition(player);
+		Vec3 position = player.position();
+		int limit = Math.min(path.size() - 1, stepIndex + BotSettings.MAX_LOOKAHEAD_STEPS.get());
+
+		int nearest = stepIndex;
+		double nearestDistance = position.distanceToSqr(
+				Vec3.atBottomCenterOf(path.step(stepIndex).pos()));
+
+		for (int index = stepIndex; index <= limit; index++) {
+			Path.Step step = path.step(index);
+			if (index > stepIndex && isWorkOutstanding(minecraft, step)) {
+				break; // never let progress run past mining or building we have not done yet
+			}
+			if (feet.equals(step.pos())) {
+				return index + 1; // standing squarely on it: it is behind us
+			}
+			double distance = position.distanceToSqr(Vec3.atBottomCenterOf(step.pos()));
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearest = index;
+			}
+		}
+
+		// Close enough to the nearest node counts as having reached it, so a smoothed run that skims
+		// past a node still advances instead of stalling on it.
+		double arrival = BotSettings.NODE_ARRIVAL_DISTANCE.get() * BotSettings.NODE_ARRIVAL_DISTANCE.get();
+		return nearestDistance < arrival ? nearest + 1 : nearest;
+	}
+
+	/**
+	 * Whether this step's world edits still need doing, judged against the world as it is now.
+	 *
+	 * <p>Deliberately not {@code Step.needsWork()}: that reports what the <em>plan</em> called for
+	 * and stays true forever once satisfied. Blocking progress on it strands the bot on a node it
+	 * has already finished — which, for a pillar, means standing on the block it just placed and
+	 * steering at its own feet.</p>
+	 */
+	private boolean isWorkOutstanding(Minecraft minecraft, Path.Step step) {
+		for (BlockPos blocking : step.toBreak()) {
+			if (!minecraft.level.getBlockState(blocking).isAir()) {
+				return true;
+			}
+		}
+		return step.toPlace() != null && needsFilling(minecraft, step.toPlace());
+	}
+
+	private void tickBreaking(Minecraft minecraft, LocalPlayer player) {
+		switch (breaker.tick(minecraft, player)) {
+			case WORKING -> {
+				// stand still and keep mining
+			}
+			case DONE -> {
+				BlockPos broken = breakingPos;
+				if (countBrokenBlock()) {
+					// The quota was filled by a block we were only cutting through. Sweep up what it
+					// dropped and finish there rather than walking on to a target we no longer need —
+					// but sweep first, because the drops are the reason we were mining at all.
+					huntReached = true;
+					beginCollecting(minecraft, Vec3.atCenterOf(broken));
+					return;
+				}
+				breakIndex++;
+				status = Status.FOLLOWING;
+			}
+			case OUT_OF_RANGE, FAILED -> {
+				breaker.cancel(minecraft);
+				replan(minecraft);
+			}
+		}
+	}
+
+	/** Breaking the block we came to mine. */
+	private void tickMining(Minecraft minecraft, LocalPlayer player) {
+		switch (breaker.tick(minecraft, player)) {
+			case WORKING -> {
+				// keep mining
+			}
+			case DONE -> {
+				// Counted here rather than after the sweep, because the sweep is where drops that
+				// cannot be reached get abandoned — and a block that was mined still counts as
+				// mined even if its drop rolled into lava.
+				huntReached = countBrokenBlock() || huntReached;
+				beginCollecting(minecraft,
+						mineTarget != null ? Vec3.atCenterOf(mineTarget) : player.position());
+			}
+			case OUT_OF_RANGE, NO_MATERIAL, FAILED -> {
+				breaker.cancel(minecraft);
+				// Too far to touch from here. Aim the route at the block itself so the pathfinder
+				// digs its way in, rather than replanning to the spot we already stand on.
+				if (mineTarget != null) {
+					goal = new GoalBlock(mineTarget);
+				}
+				replan(minecraft);
+			}
+		}
+	}
+
+	/**
+	 * Starts sweeping up whatever the block we just broke left behind.
+	 *
+	 * <p>Mining is pointless if the results stay on the floor, and a hunt that moves straight to the
+	 * next target walks away from its own drops every time. Baritone does the same thing from the
+	 * other direction — {@code mineScanDroppedItems} makes dropped items of the wanted type valid
+	 * pathing destinations in their own right.</p>
+	 */
+	/**
+	 * @param anchor where the drops should be — the block that broke. Loot
+	 *               is only swept near this point, so the bot collects what <em>it</em> produced
+	 *               rather than every stray item it happens to walk past.
+	 */
+	private void beginCollecting(Minecraft minecraft, Vec3 anchor) {
+		resetPlan(minecraft);
+		collecting = true;
+		collectAnchor = anchor;
+		collectTicks = 0;
+		status = Status.COLLECTING;
+	}
+
+	/** Nearest drop belonging to the block we just mined, or {@code null}. */
+	private ItemEntity findOwnDrop(Minecraft minecraft) {
+		if (collectAnchor == null) {
+			return null;
+		}
+		return ItemScanner.findNear(
+				minecraft.level, collectAnchor, BotSettings.COLLECT_RADIUS.get(), stack -> true);
+	}
+
+	/**
+	 * Waits for the drops to appear, then hands each one to the normal navigation machinery.
+	 *
+	 * <p>This state only covers the gap between the block breaking and the drops existing. Actually getting
+	 * there is a routing problem — the loot may be behind the wall we just mined through, at the
+	 * bottom of a hole, or across a fence — so it becomes an ordinary goal rather than something
+	 * walked at blindly.</p>
+	 */
+	private void tickCollecting(Minecraft minecraft, LocalPlayer player) {
+		collectTicks++;
+
+		ItemEntity drop = findOwnDrop(minecraft);
+
+		if (drop == null) {
+			// Drops appear a tick or two after the block breaks, so an instant "nothing here"
+			// would always be wrong. Wait briefly before concluding there is nothing.
+			if (collectTicks > BotSettings.COLLECT_GRACE_TICKS.get()) {
+				collecting = false;
+				continueHunt(minecraft);
+			}
+			return;
+		}
+
+		goal = new GoalBlock(BlockPos.containing(drop.position()));
+		replan(minecraft); // routes there properly, obstacles and all
+	}
+
+	/** Called on arrival while sweeping loot: take the next drop, or finish and move on. */
+	private void resumeCollecting(Minecraft minecraft, LocalPlayer player) {
+		ItemEntity drop = findOwnDrop(minecraft);
+
+		if (drop == null) {
+			collecting = false;
+			continueHunt(minecraft);
+			return;
+		}
+		goal = new GoalBlock(BlockPos.containing(drop.position()));
+		replan(minecraft);
+	}
+
+	/** Abandons the loot sweep — used when the drops turn out to be unreachable. */
+	private void abandonCollecting(Minecraft minecraft) {
+		collecting = false;
+		message("Can't reach the drops — moving on.");
+		continueHunt(minecraft);
+	}
+
+	/**
+	 * Looks for the next target of the hunted kind, finishing the hunt when the quota is met or none
+	 * are left.
+	 */
+	private void continueHunt(Minecraft minecraft) {
+		Set<Block> family = huntedFamily;
+		EntityType<?> type = huntedType;
+		String name = huntedName;
+		boolean execute = huntExecute;
+
+		if (huntReached) {
+			// Asked for a number and got it. Announced separately from running out, because "got the
+			// twenty you wanted" and "there are none left anywhere" are very different outcomes and
+			// the difference decides what to do next.
+			message("Got the " + huntTally + " " + name + " you asked for.");
+			huntReached = false;
+			huntQuota = 0;
+			resetPlan(minecraft);
+			huntedBlock = null;
+			huntedFamily = Set.of();
+			huntedType = null;
+			huntedEntity = null;
+			mineTarget = null;
+			status = Status.SUCCEEDED;
+			input.clear();
+			return;
+		}
+		resetPlan(minecraft);
+
+		LocalPlayer player = minecraft.player;
+		boolean more = player != null && execute && (!family.isEmpty()
+				? huntFor(minecraft, player, family, name, true, huntTravel)
+				: type != null && huntForEntity(minecraft, player, type, name, true, huntTravel));
+
+		if (!more) {
+			// A one-off dig deserves saying so. A spent hunt ends quietly because it has already
+			// announced every block it took; this one has announced nothing.
+			if (digTarget != null) {
+				message("Broke the " + digName + " at " + format(digTarget) + ".");
+				digTarget = null;
+			}
+			huntedBlock = null;
+			huntedFamily = Set.of();
+			huntedType = null;
+			huntedEntity = null;
+			mineTarget = null;
+			status = Status.SUCCEEDED;
+			input.clear();
+		}
+	}
+
+	private void tickPlacing(Minecraft minecraft, LocalPlayer player) {
+		ActionState result = placer.tick(minecraft, player, input);
+
+		// Scaffolding on the way somewhere, or the whole point of the trip? The two want opposite
+		// things from every outcome below: one carries on walking, the other is finished.
+		boolean requested = buildTarget != null;
+
+		switch (result) {
+			case WORKING -> {
+				// keep clicking
+			}
+			case DONE -> {
+				if (requested) {
+					finishBuild(minecraft, true, "Placed " + buildItem.getName(buildItem.getDefaultInstance())
+							.getString() + " at " + format(buildTarget) + ".");
+				} else {
+					status = Status.FOLLOWING;
+				}
+			}
+			case OUT_OF_RANGE -> {
+				placer.cancel();
+				replan(minecraft);
+			}
+			case NO_MATERIAL -> {
+				placer.cancel();
+				if (requested) {
+					// A named block has no substitute, and nothing to escalate to — going off to dig up
+					// a furnace is not a thing. Say so plainly instead.
+					finishBuild(minecraft, false, "No " + buildItem.getName(buildItem.getDefaultInstance())
+							.getString() + " in the inventory to place.");
+					return;
+				}
+				// Escalate: loot lying about first (free), then dig some up, and only give up on
+				// building when there is nothing worth mining either. The dropped-block search
+				// excludes the haul — chasing the spruce log we just dropped, only to refuse to
+				// build with it, is an infinite loop.
+				Block avoid = huntedBlock;
+				String scaffold = InventoryManager.scaffoldName();
+				if (fetchNearby(minecraft, player, InventoryManager.scaffoldFilter(avoid), scaffold)) {
+					replan(minecraft);
+				} else {
+					// Baritone's behaviour when it runs out of throwaway blocks: stop building and
+					// route around instead. It does not go off to dig up more, and neither do we.
+					//
+					// Naming the block matters when one was chosen: "out of building blocks" reads as
+					// an empty pack, when in fact the pack may be full and only the cobble has run out.
+					allowPlace = false;
+					message("Out of " + scaffold + " — continuing without placing.");
+					replan(minecraft);
+				}
+			}
+			case FAILED -> {
+				String why = placer.problem();
+				placer.cancel();
+				if (requested) {
+					// Someone asked for a block at a named spot and it did not go there. Replanning would
+					// walk back and try the same impossible placement again — the bot's own body, or a
+					// spot with nothing to build against, is not something another route fixes.
+					finishBuild(minecraft, false, "Couldn't place " + buildItem
+							.getName(buildItem.getDefaultInstance()).getString() + " at " + format(buildTarget)
+							+ (why.isEmpty() ? "." : " — " + why + "."));
+					return;
+				}
+				// Scaffolding: a bad anchor or a timeout, not an inventory problem. Replanning routes
+				// around it and keeps building available for the rest of the journey.
+				replan(minecraft);
+			}
+		}
+	}
+
+	// ---------------------------------------------------------------- movement
+
+	/**
+	 * Steers towards one path node, jumping and sprinting as the terrain calls for it.
+	 *
+	 * <p>Purely a steering function: it decides which keys to hold and which way to face, and never
+	 * touches the progress marker. Progress is owned solely by {@link #advanceProgress}.</p>
+	 */
+	private void walkTowards(Minecraft minecraft, LocalPlayer player, Path.Step step) {
+		Vec3 position = player.position();
+		Vec3 target = Vec3.atBottomCenterOf(step.pos());
+		double heightDelta = target.y - position.y;
+		double dx = target.x - position.x;
+		double dz = target.z - position.z;
+		boolean hasHeading = dx * dx + dz * dz > BotSettings.YAW_DEADZONE_SQR.get();
+
+		// Ease the pitch back to level after mining or building looked up/down.
+		player.setXRot(Steering.approach(player.getXRot(), 0.0f));
+
+		if (hasHeading) {
+			float desiredYaw = Steering.yawTowards(position, target);
+			player.setYRot(Steering.approach(player.getYRot(), desiredYaw, BotSettings.NAV_TURN_PER_TICK.getFloat()));
+			float yawError = Steering.angleDifference(player.getYRot(), desiredYaw);
+
+			// Turn on the spot rather than walking off at a wild angle and swinging back.
+			input.forward(yawError < BotSettings.MAX_FORWARD_ANGLE.getFloat());
+
+			input.sprint(shouldSprint(minecraft, player)
+					&& yawError < BotSettings.SPRINT_ANGLE_THRESHOLD.getFloat());
+		} else {
+			// Directly above or below us: there is no meaningful heading to take, and computing one
+			// from the near-zero horizontal delta would just spin the view on the spot.
+			input.forward(false);
+		}
+
+		// Coming in to land. Sneaking cuts the speed to about a third, which is what stops the last
+		// stride of a journey sliding past the block it was aimed at — and, for free, stops it walking
+		// off the edge of one.
+		if (settling(position, target)) {
+			input.sneak(true).sprint(false);
+		}
+
+		// Once genuinely falling, stop steering: further input only adds drift, and drifting is how
+		// a planned three-block drop turns into an unplanned six-block one.
+		if (!player.onGround() && player.getDeltaMovement().y < -0.4) {
+			input.forward(false).sprint(false);
+		}
+
+		if (player.isInWater()) {
+			// Swimming: hold jump to stay up, and to climb out at the far side.
+			input.jump(heightDelta > -0.2);
+		} else if (heightDelta > 0.4 && player.onGround()) {
+			input.jump(true);
+		} else if (player.horizontalCollision && player.onGround()) {
+			// Something low is in the way that the node grid does not model — a snow layer, a slab,
+			// a fence post. Hop it rather than grinding into it.
+			input.jump(true);
+		} else if (ticksSinceProgress > STUCK_JUMP_TICKS && player.onGround()) {
+			// Nudge over a small lip (fence post, uneven slab) before declaring failure.
+			input.jump(true);
+		}
+	}
+
+	/**
+	 * Whether this is the final approach, and momentum is now the enemy rather than the point.
+	 *
+	 * <p>Three conditions, and all three are needed. The route must <b>reach the goal</b> — the end of
+	 * a partial segment is not an arrival, it is as far as the planner could see, and slowing at every
+	 * one of those would crawl a long journey. It must be the <b>last node</b>. And the bot must be
+	 * <b>within reach of it</b>, because sneaking from further out is just a slow walk.</p>
+	 */
+	private boolean settling(Vec3 position, Vec3 target) {
+		double within = BotSettings.ARRIVAL_SNEAK_DISTANCE.get();
+		if (within <= 0.0 || path == null || !path.reachesGoal() || remainingSteps() > 1) {
+			return false;
+		}
+		// Horizontal only. A goal a few blocks below is approached by falling, and sneaking through the
+		// air achieves nothing except arriving with no control over where.
+		double dx = target.x - position.x;
+		double dz = target.z - position.z;
+		return dx * dx + dz * dz <= within * within;
+	}
+
+	/**
+	 * Whether to sprint towards the current step.
+	 *
+	 * <p>Sprinting is a commitment, not a speed setting: it roughly doubles the momentum carried into
+	 * whatever comes next, which is free speed on a straight run and a swing wide of the corner on a
+	 * turn. So there are real reasons to withhold it — a drop, a squeeze, a stop to build.</p>
+	 *
+	 * <p>But it was withheld far too readily. Requiring the <em>next</em> move to continue in exactly
+	 * the same direction — Baritone's rule — turns sprinting off at every diagonal-to-cardinal
+	 * transition, which on real terrain is most of them, and the bot walked almost everywhere. Baritone
+	 * can afford that rule because it re-evaluates against its own smoothing-free, state-machine-driven
+	 * execution; applied on top of a smoothed route it just suppresses sprint. Now the default is to
+	 * sprint on any reasonable run, with collinearity kept only as a tie-breaker for the very next
+	 * node.</p>
+	 */
+	private boolean shouldSprint(Minecraft minecraft, LocalPlayer player) {
+		if (player.isInWater() || !canSprint(player)) {
+			return false;
+		}
+		// A jump coming up decides its own run-up: the long jump must reach the launch block at full
+		// speed, the short one must not or it overshoots the landing.
+		int jump = parkourWithin(BotSettings.PARKOUR_RUNWAY_STEPS.get());
+		if (jump > 0) {
+			return jump >= BotSettings.PARKOUR_SPRINT_MIN_DISTANCE.get();
+		}
+		if (remainingSteps() <= BotSettings.MIN_STEPS_FOR_SPRINT.get()) {
+			return false; // nowhere left to sprint to; charging past the last node means doubling back
+		}
+		if (stepIndex + 1 >= path.size()) {
+			return false;
+		}
+
+		Path.Step current = path.step(stepIndex);
+		Path.Step next = path.step(stepIndex + 1);
+		if (next.needsWork()) {
+			return false; // we are about to stop and mine or build; arriving fast helps nothing
+		}
+		if (next.pos().getY() < current.pos().getY()) {
+			return false; // a drop is coming: do not carry momentum over the edge
+		}
+		if (isEdging(minecraft, current) || isEdging(minecraft, next)) {
+			return false; // squeezing past a corner; vanilla would cancel the sprint on contact anyway
+		}
+		// Collinear is ideal, but a single turn ahead is not a reason to walk — the smoothed heading
+		// changes gradually, so the bot leans into the corner rather than swinging wide of it. Only a
+		// turn sharp enough to double back suppresses the sprint.
+		return !isSharpTurn(current, next);
+	}
+
+	/** Whether the route reverses direction between two steps — the one turn worth slowing for. */
+	private static boolean isSharpTurn(Path.Step first, Path.Step second) {
+		int firstX = first.pos().getX() - first.from().getX();
+		int firstZ = first.pos().getZ() - first.from().getZ();
+		int secondX = second.pos().getX() - second.from().getX();
+		int secondZ = second.pos().getZ() - second.from().getZ();
+		// Negative dot product means the new heading points back the way we came.
+		return firstX * secondX + firstZ * secondZ < 0;
+	}
+
+	/**
+	 * Whether a diagonal step squeezes past a blocked corner rather than crossing open ground.
+	 *
+	 * <p>The planner now accepts these — a player does slide diagonally along a wall face — but they
+	 * are not worth sprinting: brushing the wall cancels the sprint in vanilla regardless, and going
+	 * into the squeeze at speed is what wedges the bot on the corner.</p>
+	 */
+	private boolean isEdging(Minecraft minecraft, Path.Step step) {
+		int dx = step.pos().getX() - step.from().getX();
+		int dz = step.pos().getZ() - step.from().getZ();
+		if (dx == 0 || dz == 0) {
+			return false; // not a diagonal; there is no corner to squeeze past
+		}
+		WorldView world = new WorldView(minecraft.level);
+		return !world.fitsAt(step.from().offset(dx, 0, 0))
+				|| !world.fitsAt(step.from().offset(0, 0, dz));
+	}
+
+	/** Whether two consecutive steps continue in the same horizontal direction. */
+	private static boolean isCollinear(Path.Step first, Path.Step second) {
+		return first.pos().getX() - first.from().getX() == second.pos().getX() - second.from().getX()
+				&& first.pos().getZ() - first.from().getZ() == second.pos().getZ() - second.from().getZ();
+	}
+
+	// ---------------------------------------------------------------- helpers
+
+	/**
+	 * Watches for the bot failing to advance along its route, and replans when it does.
+	 *
+	 * <p>Progress is the furthest path node reached — not distance travelled. A bot circling on the
+	 * spot, shuffling against a wall, or repeatedly failing a jump is moving continuously while
+	 * getting nowhere, so a movement-based test stays silent exactly when it is needed most.</p>
+	 */
+	private void trackProgress(Minecraft minecraft, LocalPlayer player) {
+		if (status != Status.FOLLOWING) {
+			// Breaking and building legitimately make no path progress; don't count that as stuck.
+			ticksSinceProgress = 0;
+			return;
+		}
+		if (stepIndex > furthestProgress) {
+			furthestProgress = stepIndex;
+			ticksSinceProgress = 0;
+			return;
+		}
+		if (++ticksSinceProgress > movementBudget()) {
+			handleStuck(minecraft, player);
+		}
+	}
+
+	/**
+	 * Ticks the current movement is allowed before it counts as stuck: what the planner estimated it
+	 * would take, plus a fixed grace period.
+	 *
+	 * <p>Budgeting per movement rather than against one global timeout is Baritone's approach, and the
+	 * difference is real. A flat limit has to be generous enough for the slowest legitimate move —
+	 * tunnelling through stone, a long fall — which leaves it far too patient with the common failure,
+	 * a bot wedged against a fence post on a one-block walk. Scaling with the estimate keeps quick
+	 * moves on a short leash and slow ones unhurried.</p>
+	 */
+	private double movementBudget() {
+		double estimate = path != null && stepIndex < path.size() ? path.step(stepIndex).cost() : 0.0;
+		return estimate + BotSettings.MOVEMENT_TIMEOUT_TICKS.get();
+	}
+
+	/**
+	 * Replans after getting stuck, giving up if repeated replans are not bringing us any closer.
+	 *
+	 * <p>The distance check is what stops an infinite loop: replanning from the same spot yields
+	 * the same path and the bot gets stuck at the same place. Requiring measurable progress towards
+	 * the goal between snags means a genuinely unreachable target eventually reports failure rather
+	 * than retrying forever.</p>
+	 */
+	private void handleStuck(Minecraft minecraft, LocalPlayer player) {
+		// Loot is optional. Never let an unreachable drop stall the hunt behind it.
+		if (collecting) {
+			abandonCollecting(minecraft);
+			return;
+		}
+
+		// Before replanning, try to chew through whatever is physically in the way. The grid model
+		// misjudges partial and awkward blocks — a snowed-over leaf at head height, a fence, a
+		// half-slab — so the planner keeps producing a route the physics cannot walk, and the bot
+		// bonks and replans forever. Breaking the obstruction is what actually gets it moving.
+		if (allowBreak && breakObstruction(minecraft, player)) {
+			return;
+		}
+
+		// Progress is measured with the goal's *own* estimate rather than as a distance to a point. For
+		// an exact block those agree; for a column or a height they do not, and a plain distance would
+		// count the bot's changing altitude as drifting away from an X/Z goal it was walking straight
+		// towards — and then give up on it.
+		double distance = goal.heuristic(feetPosition(player));
+
+		if (distance < bestGoalDistance - BotSettings.STUCK_PROGRESS_MARGIN.get()) {
+			bestGoalDistance = distance;
+			fruitlessReplans = 0;
+		} else if (++fruitlessReplans >= BotSettings.MAX_STUCK_REPLANS.get()) {
+			fail(minecraft, "Stuck and not getting closer to " + describeGoal() + " — giving up.");
+			return;
+		}
+
+		message("Stuck — recalculating route.");
+		replan(minecraft);
+	}
+
+	/**
+	 * Breaks the block obstructing forward movement, if there is a breakable one.
+	 *
+	 * <p>Looks at the block ahead in the direction of the current path node, at both foot and head
+	 * height, and mines the first breakable one. This is the bot's escape hatch from geometry the
+	 * pathfinder cannot model: rather than declaring failure at a leaf it keeps clipping, it opens
+	 * a hole and walks through.</p>
+	 *
+	 * @return whether a break was started
+	 */
+	private boolean breakObstruction(Minecraft minecraft, LocalPlayer player) {
+		if (path == null || stepIndex >= path.size()) {
+			return false;
+		}
+		Vec3 toNode = Vec3.atBottomCenterOf(path.step(stepIndex).pos()).subtract(player.position());
+		Direction dir = Direction.getApproximateNearest(toNode.x, 0.0, toNode.z);
+
+		WorldView world = new WorldView(minecraft.level);
+		BlockPos feet = feetPosition(player);
+		// Head first: a head-height leaf is the exact case that traps the bot while its feet are
+		// clear, so clearing the head opens the way even when the foot block is already passable.
+		for (BlockPos ahead : new BlockPos[] { feet.above().relative(dir), feet.relative(dir) }) {
+			if (world.isKnown(ahead) && !world.state(ahead).isAir() && world.isBreakable(ahead)) {
+				resetPlan(minecraft);
+				beginBreaking(minecraft, ahead);
+				status = Status.BREAKING;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Whether the journey is done.
+	 *
+	 * <p>Two tests, deliberately. The goal's own {@link Goal#isInGoal} is the authority — it is the
+	 * only thing that knows what an X/Z goal or a radius goal actually means. The distance tolerance
+	 * beneath it is a safety net for the exact-block case: standing at a block boundary, or on a slab
+	 * that shifts the feet coordinate, can leave the bot visibly arrived while its feet block reads as
+	 * the neighbour, and without the fallback it would circle the destination forever.</p>
+	 */
+	private boolean withinGoalTolerance(LocalPlayer player) {
+		if (goal.isInGoal(feetPosition(player))) {
+			return true;
+		}
+		Vec3 target = Vec3.atBottomCenterOf(goal.approximatePosition());
+		Vec3 position = player.position();
+		double dx = target.x - position.x;
+		double dz = target.z - position.z;
+		double dy = target.y - position.y;
+		return dx * dx + dz * dz < BotSettings.GOAL_TOLERANCE.get() * BotSettings.GOAL_TOLERANCE.get()
+				&& Math.abs(dy) < BotSettings.GOAL_VERTICAL_TOLERANCE.get();
+	}
+
+	/**
+	 * Whether a block still has to be placed at {@code pos} for the plan to hold. Delegates to
+	 * {@link WorldView#isFillable(net.minecraft.world.level.BlockGetter, BlockPos)} so the planner,
+	 * the placer and this controller all judge "already filled?" by one rule and cannot drift apart.
+	 */
+	private boolean needsFilling(Minecraft minecraft, BlockPos pos) {
+		return WorldView.isFillable(minecraft.level, pos);
+	}
+
+	/** Block position of the player's feet — the coordinate space the pathfinder works in. */
+	private static BlockPos feetPosition(LocalPlayer player) {
+		return BlockPos.containing(player.position());
+	}
+
+	/**
+	 * Where the search should treat the player as standing.
+	 *
+	 * <p>On the ground this is just the feet block. In the air — a long fall the airborne wait gave
+	 * up on — it snaps down to the first standable block, so the plan still starts from real ground
+	 * rather than a point in the sky the physics will never leave the player at.</p>
+	 */
+	private BlockPos planStart(Minecraft minecraft, LocalPlayer player) {
+		BlockPos feet = feetPosition(player);
+		if (player.onGround() || player.isInWater()) {
+			return feet;
+		}
+		WorldView world = new WorldView(minecraft.level);
+		for (int drop = 0; drop <= BotSettings.MAX_FALL_SCAN.get(); drop++) {
+			BlockPos candidate = feet.below(drop);
+			if (world.isKnown(candidate.below()) && world.isStandable(candidate.below())
+					&& world.fitsAt(candidate)) {
+				return candidate;
+			}
+		}
+		return feet;
+	}
+
+	private void replan(Minecraft minecraft) {
+		// Snapshot the outgoing route first: the search that replaces it discounts these positions, so
+		// a replan nudges the current course rather than proposing an unrelated one.
+		favouredRoute = favouredPositions();
+		resetPlan(minecraft);
+		status = Status.PLANNING;
+	}
+
+	private void resetPlan(Minecraft minecraft) {
+		path = null;
+		search = null;
+		lookaheadSearch = null;
+		retargetSearch = null;
+		stepIndex = 0;
+		breakIndex = 0;
+		ticksSinceProgress = 0;
+		furthestProgress = -1;
+		airborneWait = 0;
+		ticksOffPath = 0;
+		if (minecraft != null) {
+			breaker.cancel(minecraft);
+			// Release the use key too, or an eat or a raised shield in progress stays held past the
+			// reset — the player would keep eating, or stand frozen behind a shield, after the bot
+			// stopped or replanned.
+			eater.cancel(minecraft);
+			if (minecraft.player != null) {
+				combat.cancel(minecraft, minecraft.player);
+			}
+		}
+		placer.cancel();
+		doorOpener.reset();
+		if (minecraft != null) {
+			transfer.cancel(minecraft);
+			crafter.cancel(minecraft);
+			smelter.cancel(minecraft);
+		}
+	}
+
+	/**
+	 * Detours to a dropped stack of something we have run out of.
+	 *
+	 * @return whether a detour was started; if not, the caller should fall back to doing without
+	 */
+	private boolean fetchNearby(Minecraft minecraft, LocalPlayer player,
+			Predicate<ItemStack> wanted, String what) {
+		if (resumeGoal != null) {
+			return false; // already fetching something; don't stack detours
+		}
+		var dropped = ItemScanner.findNearby(
+				minecraft.level, player, wanted, BotSettings.ITEM_SEARCH_RADIUS.get());
+		if (dropped == null) {
+			return false;
+		}
+
+		resumeGoal = goal;
+		goal = new GoalBlock(BlockPos.containing(dropped.position()));
+		message("Out of " + what + " — collecting some from " + describeGoal() + ".");
+		return true;
+	}
+
+	private void succeed(Minecraft minecraft) {
+		// Arrived at the chest on a banking trip. This has to come first: the parked task is still
+		// sitting in mineTarget/goal, and any branch below would treat reaching the chest as having
+		// finished that instead.
+		if (depositing && minecraft.player != null) {
+			resetPlan(minecraft);
+			transfer.begin(depositChest, depositFilter, depositTaking, depositWanted);
+			status = Status.DEPOSITING;
+			return;
+		}
+
+		// Finishing a fetch detour is not finishing the journey: pick the real goal back up.
+		if (resumeGoal != null) {
+			goal = resumeGoal;
+			resumeGoal = null;
+			// We may well have what we were missing now, so allow building again.
+			allowPlace = allowPlaceRequested;
+			message("Collected — resuming to " + describeGoal() + ".");
+			replan(minecraft);
+			return;
+		}
+
+		// Reached a drop. Pickup is automatic on contact, so look for the next one.
+		if (collecting && minecraft.player != null) {
+			resumeCollecting(minecraft, minecraft.player);
+			return;
+		}
+
+		// Still chasing a live mob. Reaching where it stood is not the end of anything — re-aim at
+		// wherever it has got to and keep going.
+		if (huntedEntity != null && huntedEntity.isAlive()) {
+			goal = new GoalBlock(BlockPos.containing(huntedEntity.position()));
+			replan(minecraft);
+			return;
+		}
+
+		// Arrived at the furnace we came to work.
+		if (smeltFurnace != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			smelter.begin(smeltFurnace, smeltInput, smeltFuel, smeltCount);
+			status = Status.SMELTING;
+			return;
+		}
+
+		// Arrived at the bench we came to use.
+		if (craftRecipe != null && craftTable != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			crafter.begin(craftTable, craftRecipe, craftCount);
+			status = Status.CRAFTING;
+			return;
+		}
+
+		// Arrived at something to right-click.
+		if (useTarget != null && minecraft.player != null) {
+			BlockPos target = useTarget;
+			useTarget = null;
+			rightClick(minecraft, minecraft.player, target);
+			resetPlan(minecraft);
+			status = Status.SUCCEEDED;
+			input.clear();
+			message("Used the block at " + format(target) + ".");
+			return;
+		}
+
+		// Arrived next to somewhere a block was asked for. Placed from here rather than from the
+		// exact spot, which is usually inside the block itself and therefore not stand-on-able.
+		if (buildTarget != null && minecraft.player != null) {
+			resetPlan(minecraft);
+			placer.beginWith(buildTarget, buildItem);
+			status = Status.PLACING;
+			return;
+		}
+
+		if (mineTarget != null && minecraft.player != null) {
+			// Arriving does not guarantee the block is gone: we deliberately stop *beside* it, and
+			// even routing through it can leave a no-collision block like a mushroom untouched.
+			// Break it explicitly before moving on.
+			if (mineTargetBlock != null
+					&& minecraft.level.getBlockState(mineTarget).is(mineTargetBlock)) {
+				resetPlan(minecraft);
+				beginBreaking(minecraft, mineTarget);
+				status = Status.MINING;
+				return;
+			}
+			continueHunt(minecraft);
+			return;
+		}
+
+		if (huntedType != null && huntExecute) {
+			continueHunt(minecraft);
+			return;
+		}
+
+		resetPlan(minecraft);
+		status = Status.SUCCEEDED;
+		input.clear();
+		message("Arrived at " + describeGoal() + ".");
+	}
+
+	/**
+	 * Ends the journey — unless walking was only ever the first attempt, in which case it escalates.
+	 *
+	 * <p>Both of the ways a journey can end for good come through here, which is why the escalation
+	 * lives here too rather than at either of them. Triggering on the failure is also what makes
+	 * {@link TravelMode#TRY_WALK} worth having: a walk-only search that cannot reach the goal usually
+	 * returns a <em>partial</em> route, so the bot walks as far as the terrain allows and only digs
+	 * from wherever that turned out to be — which is often most of the way there.</p>
+	 */
+	private void fail(Minecraft minecraft, String reason) {
+		if (escalateTravel(minecraft)) {
+			return;
+		}
+		resetPlan(minecraft);
+		status = Status.FAILED;
+		input.clear();
+		message(reason);
+	}
+
+	/**
+	 * Turns on mining and building after a walk-only attempt has failed.
+	 *
+	 * <p>{@code allowBreak} doubles as the record of whether this has already happened. In
+	 * {@code TRY_WALK} it starts false and only this method sets it, so finding it still false means
+	 * the escalation is unused — no second flag to keep in step. ({@code allowPlace} could not do the
+	 * job: it gets switched off and on again by running out of blocks mid-journey.)</p>
+	 *
+	 * @return whether the journey was upgraded and should carry on
+	 */
+	private boolean escalateTravel(Minecraft minecraft) {
+		if (travelMode != TravelMode.TRY_WALK || allowBreak || goal == null) {
+			return false;
+		}
+		allowBreak = true;
+		allowPlace = true;
+		allowPlaceRequested = true;
+
+		// The stuck detector's memory has to go with them. Its counters record how a *walking* bot
+		// fared, and a bot that may now dig deserves to be judged on its own attempt rather than
+		// inheriting a strike count that would fail it almost immediately.
+		planFailures = 0;
+		fruitlessReplans = 0;
+		bestGoalDistance = Double.MAX_VALUE;
+
+		// Deliberately not the caller's reason. Those sentences end in "giving up", which is exactly
+		// what this is not doing — the walk gave up, the journey did not.
+		message("No way to " + describeGoal() + " on foot — mining and building through instead."
+				+ (InventoryManager.scaffoldItem() == null
+						? "" : " Bridging with " + InventoryManager.scaffoldName() + "."));
+		replan(minecraft);
+		return true;
+	}
+
+	private void message(String text) {
+		messageSink.accept(Component.literal("[descant] " + text));
+	}
+
+	private static String format(BlockPos pos) {
+		return pos == null ? "?" : pos.getX() + ", " + pos.getY() + ", " + pos.getZ();
+	}
+}
