@@ -162,7 +162,7 @@ public enum AiProvider implements SettingChoice {
 			// gemma4:cloud is the reference the rest of this list is calibrated against.
 			case CLOUD -> List.of("gemma4:cloud", "gpt-oss:120b-cloud", "gemma4:31b-cloud",
 					"nemotron-3-ultra:cloud");
-			case CLAUDE -> List.of("claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-5");
+			case CLAUDE -> List.of("claude-haiku-4-5-20251001", "claude-sonnet-5", "claude-opus-5");
 			case CHATGPT -> List.of("gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5");
 			case QWEN -> List.of("qwen-plus", "qwen-max", "qwen-turbo");
 			case KIMI -> List.of("kimi-k2-turbo-preview", "kimi-k2-0905-preview", "moonshot-v1-32k",

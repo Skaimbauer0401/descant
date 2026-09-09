@@ -13,14 +13,70 @@ fights and banks the haul, working the steps out for itself. Client-side only, a
 
 ---
 
-## The setup is two lines
+## Pick a provider
 
-1. Install [Ollama](https://ollama.com).
-2. Run `ollama signin` once.
+Three first-class ways to drive it. All six live on the settings screen (`G`), or `/descant set aiProvider`.
 
-That is all. No API key, no billing, no account beyond the free one — the mod talks to the Ollama
-daemon on your own machine, which proxies a cloud model for you. Then type `/descant ai` and ask for
-something.
+### Ollama — free
+
+1. Install [Ollama](https://ollama.com)
+2. `ollama signin`, once
+
+That is the whole setup: no key, no billing, no account beyond the free one. The mod talks to the
+Ollama daemon on your own machine, which proxies a cloud model for you. Switch to **ollama-local** and
+a model on your own GPU drives the bot instead, offline, with nothing leaving the machine.
+
+### Anthropic — Claude
+
+1. Create a key at [console.anthropic.com](https://console.anthropic.com)
+2. Put `ANTHROPIC_API_KEY=...` in `config/descant-keys.properties`, or in your environment
+3. `/descant set aiProvider claude`
+
+Claude is excellent at choosing between twenty functions and getting their order right, and
+Haiku is cheap enough that the difference in cost against Sonnet is far larger than the difference in
+how the bot behaves. **Note this is the paid API — a Claude Pro subscription does not cover it.**
+
+### OpenAI — ChatGPT
+
+1. Create a key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+2. Put `OPENAI_API_KEY=...` in `config/descant-keys.properties`, or in your environment
+3. `/descant set aiProvider chatgpt`
+
+**Also the paid API, separate from ChatGPT Plus**, which does not cover it.
+
+### Also supported
+
+**Qwen** (`DASHSCOPE_API_KEY`, from [bailian.console.aliyun.com](https://bailian.console.aliyun.com) on
+the international endpoint — it comes with a starting allowance) and **Kimi** (`MOONSHOT_API_KEY`,
+from [platform.moonshot.ai](https://platform.moonshot.ai) — the K2 models are genuinely good at
+agentic work).
+
+Keys are read from your environment first, then the keys file — never from a setting, since settings
+get printed into chat and into the schema the model itself reads.
+
+---
+
+## Which model
+
+Each provider starts on the one worth picking, and the settings screen fetches the provider's real
+list rather than trusting a table baked into the mod.
+
+| Provider | Default | |
+| --- | --- | --- |
+| **Ollama cloud** | `gemma4:cloud` | Free. Chosen by testing: asked to gather iron and bank it in a chest, it called both actions in the right order in half a second |
+| **Ollama local** | `gemma4:12b` | The smallest local model that picked the right actions in the right order |
+| **Claude** | `claude-haiku-4-5-20251001` | Cheap, and excellent at picking functions |
+| **ChatGPT** | `gpt-4.1-mini` | |
+| **Qwen** | `qwen-plus` | |
+| **Kimi** | `kimi-k2-turbo-preview` | |
+
+On a **free** Ollama account, `gemma4:cloud`, `gpt-oss:120b-cloud` and `nemotron-3-ultra:cloud` all
+work — the last is correct but takes over a minute a turn. minimax, glm-5, deepseek-v4, qwen3.5 and
+kimi need a paid plan or credits.
+
+> Ollama is the provider that has been driven through the most real jobs. The four hosted ones are
+> implemented against their published APIs and check your key by fetching the model list before a
+> conversation ever starts, but have not yet been run through a full multi-turn task.
 
 ---
 
@@ -31,7 +87,7 @@ use — as a typed menu with a written description of each, and it answers with 
 one door. So it can only ever do things that were written and tested, and a bad answer is a wrong
 action rather than a corrupted world.
 
-Two decisions make it work with small, free models:
+Two decisions make it work even with small, free models:
 
 * **Every call runs to completion before the model hears back.** `goto` accepts a route in
   milliseconds but the walk takes a minute; reporting straight away would leave the model polling
@@ -45,38 +101,6 @@ Two decisions make it work with small, free models:
 
 `/descant ai stop` calls it off, and stops the bot with it. `/descant api` writes the whole action
 menu out as JSON if you want to see exactly what the model is given.
-
----
-
-## Which model
-
-The default is **`gemma4:cloud`**, chosen by testing rather than reputation: asked to gather iron and
-bank it in a chest, it called both actions in the right order in half a second.
-
-| Model | Free? | |
-| --- | --- | --- |
-| `gemma4:cloud` | ✅ | The default. Fast and gets the order right |
-| `gpt-oss:120b-cloud` | ✅ | Stopped after the mining step in the same test |
-| `nemotron-3-ultra:cloud` | ✅ | Correct, but over a minute per turn |
-| minimax, glm-5, deepseek-v4, qwen3.5, kimi | ❌ | Need a paid Ollama plan or credits |
-
-## Other providers
-
-All on the settings screen (`G`), all optional:
-
-| Provider | What it needs | Cost |
-| --- | --- | --- |
-| **Ollama cloud** *(default)* | `ollama signin`, once | Free |
-| **Ollama local** | A tool-capable model on your own GPU | Free, and works offline |
-| **Claude** | `ANTHROPIC_API_KEY` | Per token |
-| **ChatGPT** | `OPENAI_API_KEY` | Per token |
-| **Qwen** | `DASHSCOPE_API_KEY` | Per token |
-| **Kimi** | `MOONSHOT_API_KEY` | Per token |
-
-Keys are read from your environment first, then `config/descant-keys.properties` — never from a
-setting, since settings get printed into chat and into the schema the model itself reads. Ollama is
-the provider that has actually been used in anger; the paid four are implemented but have not yet been
-run through a full job.
 
 ---
 
@@ -116,7 +140,8 @@ Press any movement key and the bot stops. It never fights you for control of you
 
 * Minecraft **26.2**, Fabric Loader **0.19.3+**
 * [Fabric API](https://modrinth.com/mod/fabric-api) — required
-* [Ollama](https://ollama.com) — for `/descant ai`, which is the point of the mod
+* An AI provider for `/descant ai`, which is the point of the mod: [Ollama](https://ollama.com)
+  needs no key, or bring an Anthropic or OpenAI one
 
 ---
 
@@ -129,8 +154,8 @@ normal movement packet. The server needs nothing.
 
 - **Does the AI cost anything?**
 
-No. A free Ollama account runs the default model. You only pay if you deliberately switch to Claude,
-ChatGPT, Qwen or Kimi.
+Not with Ollama — a free account runs the default model. Claude, ChatGPT, Qwen and Kimi are billed per
+token by the provider, and neither a Claude Pro nor a ChatGPT Plus subscription covers API use.
 
 - **Is my world sent to a server?**
 
