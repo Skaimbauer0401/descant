@@ -173,36 +173,6 @@ Minecraft rather than a preference — those are constants, deliberately unreach
 
 ---
 
-## Inspirations
-
-**[Baritone](https://github.com/cabaletta/baritone)** — the movement layer is a deliberate,
-studied reimplementation of Baritone's model rather than a loose homage. Read out of the actual
-sources and copied: the `Goal` abstraction (a pathfinder never needs to know *where* it is going, only
-"am I there?" and "how much further?"), the octile heuristic, seven best-so-far fallback paths blended
-at different cost coefficients, backtrack cost favouring on replan, per-movement timeouts, the
-collinearity rule for sprinting, the positional parkour launch trigger, and the vanilla-derived cost
-constants. Also copied: what Baritone *doesn't* do — no path smoothing, no landing brake, no ladder
-move type. Each of those absences turned out to fix a symptom that had been chased for days. **Descant
-is LGPL-3.0 because Baritone is.**
-
-**[Voyager](https://voyager.minedojo.org/)** (NVIDIA / Caltech, 2023) — the idea that a language model
-can play Minecraft if you stop handing it a keyboard and hand it a **library of named skills with
-written descriptions** instead. Descant's action API is that idea, typed: name, description, typed
-parameters, one door in. The system prompt is treated as the real program, and its budget as a budget
-— anything a single action's own description can say belongs there, not in the prompt that is paid for
-on every round of every task.
-
-**[Mindcraft](https://github.com/kolbytn/mindcraft)** — the LLM-bot framework that has the thing Descant
-still lacks: a task harness that can say *"model X completes the wooden-pickaxe chain 8 times in 10"*.
-The test set here exists on paper — chest-then-find sequencing, count inclusion, the health threshold,
-the pickaxe dependency chain — it has simply never been automated. That is the next honest step.
-
-**What is different:** Voyager and Mindcraft both drive a headless
-[Mineflayer](https://github.com/PrismarineJS/mineflayer) client — a second, separate player. Baritone
-drives your own character but has no language layer. Descant is the pair of them: an in-client bot,
-playing **your** character in **your** game, that you can also just talk to.
-
----
 
 ## Not yet
 
