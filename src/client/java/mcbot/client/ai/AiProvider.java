@@ -122,7 +122,8 @@ public enum AiProvider implements SettingChoice {
 	public String advice() {
 		return switch (this) {
 			case CLOUD -> "The best value here: a strong model at cloud speed, through the same daemon "
-					+ "and the same one-off 'ollama signin', with no per-token bill. Start here.";
+					+ "and the same one-off 'ollama signin', with no per-token bill on the models a free "
+					+ "account can reach. Start here.";
 			case OLLAMA -> "Not recommended. A model small enough to run at home has to pick the right "
 					+ "function out of twenty and get their order right, and that is the task it is worst "
 					+ "at — the failures are wrong actions rather than wrong answers. Right for working "
@@ -141,7 +142,7 @@ public enum AiProvider implements SettingChoice {
 	 * Model names worth offering before anything has been fetched, best first.
 	 *
 	 * <p>At least three each, so the chooser is never an empty box, and the first is the one to pick —
-	 * chosen across providers to land at roughly the same capability as {@code minimax-m3}, which is
+	 * chosen across providers to land at roughly the same capability as {@code gemma4}, which is
 	 * the level this job actually needs: reliable function choice, not deep reasoning.</p>
 	 *
 	 * <p><b>These go stale, and are marked as such when they do.</b> Hosted model ids are retired
@@ -155,9 +156,12 @@ public enum AiProvider implements SettingChoice {
 			// Measured rather than assumed: gemma4:12b was the smallest local model that picked the right
 			// actions in the right order. qwen3:14b is stronger if the memory is there.
 			case OLLAMA -> List.of("gemma4:12b", "qwen3:14b", "mistral-nemo:12b", "llama3.1:8b");
-			// minimax-m3 is the reference the rest of this list is calibrated against.
-			case CLOUD -> List.of("minimax-m3:cloud", "gpt-oss:120b-cloud", "nemotron-3-ultra:cloud",
-					"gemma4:cloud");
+			// Only the models a free Ollama account can actually run: everything stronger — minimax-m3,
+			// the glm-5 and deepseek-v4 families, qwen3.5, kimi — answers 402 "requires a subscription"
+			// without a paid plan, and a suggestion that cannot be accepted is worse than none.
+			// gemma4:cloud is the reference the rest of this list is calibrated against.
+			case CLOUD -> List.of("gemma4:cloud", "gpt-oss:120b-cloud", "gemma4:31b-cloud",
+					"nemotron-3-ultra:cloud");
 			case CLAUDE -> List.of("claude-haiku-4-5-20251001", "claude-sonnet-4-5", "claude-opus-4-5");
 			case CHATGPT -> List.of("gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5");
 			case QWEN -> List.of("qwen-plus", "qwen-max", "qwen-turbo");

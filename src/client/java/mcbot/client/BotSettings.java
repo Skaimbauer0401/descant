@@ -376,21 +376,24 @@ public final class BotSettings {
 	/**
 	 * The cloud model.
 	 *
-	 * <p>MiniMax M3, chosen by measurement rather than reputation. Asked to gather iron and bank it in
-	 * a chest, it was the only free model that both picked the right actions <em>and</em> got their
-	 * order right, in about two seconds. {@code gpt-oss:120b} confused {@code set} with {@code chest};
-	 * {@code nemotron-3-ultra} was right but took nearly a minute per turn, which across a dozen turns
-	 * is a very long time to watch nothing happen.</p>
+	 * <p>Gemma 4, chosen by measurement rather than reputation, and from the shortlist a free Ollama
+	 * account is allowed to run at all — MiniMax M3 was the previous default and now answers 402
+	 * "requires a subscription", as do glm-5.x, deepseek-v4, qwen3.5 and the Kimi models. Asked to
+	 * gather iron and bank it in a chest, {@code gemma4:cloud} picked both actions and got their order
+	 * right in half a second. {@code gpt-oss:120b} stopped after the mining step; {@code
+	 * nemotron-3-ultra} took over a minute for a single turn, which across a dozen turns is a very
+	 * long time to watch nothing happen.</p>
 	 *
-	 * <p>Cloud models are retired often — several were withdrawn within the last month — so expect to
-	 * change this. Needs {@code ollama signin} once.</p>
+	 * <p>Which models are free changes with Ollama's plans, and cloud models are retired often, so
+	 * expect to change this. Needs {@code ollama signin} once.</p>
 	 */
 	public static final StringSetting AI_CLOUD_MODEL = new StringSetting(
 			"aiCloudModel", AiProvider.CLOUD.recommendedModel(),
 			"an Ollama cloud model name",
 			"The cloud model, used when aiProvider is 'cloud'. Needs 'ollama signin' once. Stronger than "
 					+ "anything local, at the cost of sending the conversation off this machine. "
-					+ "nemotron-3-ultra:cloud is heavier but far slower.");
+					+ "gemma4:cloud and gpt-oss:120b-cloud run on a free account; the bigger names "
+					+ "(minimax-m3, glm-5.3, deepseek-v4, kimi) need a paid plan or usage credits.");
 
 	/**
 	 * Claude's model id.

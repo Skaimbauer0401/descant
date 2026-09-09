@@ -244,11 +244,12 @@ public final class OllamaProvider implements LlmProvider {
 		}
 		if (status == 410 || lower.contains("was retired")) {
 			return model() + " has been retired by Ollama. Pick a current one — "
-					+ "'/mcbot set aiCloudModel minimax-m3:cloud' — and see ollama.com/search?c=cloud.";
+					+ "'/mcbot set aiCloudModel gemma4:cloud' — and see ollama.com/search?c=cloud.";
 		}
 		if (lower.contains("requires a subscription") || lower.contains("upgrade for access")) {
-			return model() + " needs a paid Ollama subscription. The free cloud models that can drive "
-					+ "the bot include minimax-m3:cloud, nemotron-3-ultra:cloud and gemma4:cloud.";
+			return model() + " needs a paid Ollama subscription or usage credits. The cloud models a "
+					+ "free account can drive the bot with are gemma4:cloud, gpt-oss:120b-cloud and "
+					+ "nemotron-3-ultra:cloud — try '/mcbot set aiCloudModel gemma4:cloud'.";
 		}
 		if (status == 404 || lower.contains("not found") || lower.contains("try pulling")) {
 			return model() + " isn't installed. Pull it with 'ollama pull " + model() + "'"
