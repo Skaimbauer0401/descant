@@ -40,14 +40,18 @@ def _fill(p, x0, y0, x1, y1, colour):
             p[x, y] = colour
 
 
-def icon():
+def icon(ground=GROUND):
     """A waypoint marker that looks back at you — the two halves of the mod in one silhouette.
 
     A marker alone would be a map mod and a face alone would be a robot mod; the point of fusing them
     is that this is the only shape that is neither. The pixel-stepped taper is what keeps it
     Minecraft's rather than a generic map pin: the same staircase edge every block in the game has.
+
+    Pass a transparent ``ground`` for the marker alone. The banner needs that: its backdrop is this
+    same slate, so an opaque tile is invisible *as* a tile and still stops the block lattice dead —
+    the marker ends up standing in a plain square hole punched through the grid.
     """
-    image = Image.new("RGBA", (N, N), GROUND)
+    image = Image.new("RGBA", (N, N), ground)
     p = image.load()
 
     # Head, as large as the frame allows once the point below is accounted for.
@@ -240,7 +244,7 @@ def banner(width=1280, height=640):
     little = little.resize((little.width * 4, little.height * 4), Image.NEAREST)
     image.paste(little, (48, horizon[0][1] - little.height), little)
 
-    mark = icon().resize((320, 320), Image.NEAREST)
+    mark = icon(ground=(0, 0, 0, 0)).resize((320, 320), Image.NEAREST)
     image.paste(mark, (160, 132), mark)
 
     # Scale 13, not 16: "descant" is seven glyphs where "mcbot" was five, and at 16 it ran into the
