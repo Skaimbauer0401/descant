@@ -2,9 +2,8 @@
 
 **A pathfinding bot that plays your own character — by command, or in plain words.**
 
-> *descant* — a melody line sung above the main tune. [Baritone](https://github.com/cabaletta/baritone)
-> is named after a voice; the movement here is Baritone's model, and the language layer is the line
-> that sits on top of it.
+> *descant* — a melody line sung above the main tune. The navigator does the walking; the language
+> layer is the line that sits on top of it.
 
 Two things live in this mod.
 
@@ -179,8 +178,8 @@ Written down because a mod page that lists only what works is not much use.
 
 - No nether portals, no boats or minecarts, no elytra.
 - Bridging only places against an existing full-cube neighbour — no sneak-back-place over open air.
-- Parkour-place (jump, then place a block mid-air to extend the reach) is the one Baritone parkour
-  feature not copied; it needs mid-air placement, which the placer does not do yet.
+- Parkour-place — jumping and then placing a block mid-air to reach further than the jump alone
+  would. It needs placement from a moving player, which the placer does not do yet.
 - No chunk cache, so search size is capped by what the client thread can afford per tick. This is the
   biggest remaining architectural gap.
 - Awkward-block geometry — snow layers, slabs, leaves, fences — is the recurring soft spot. The escape
@@ -205,5 +204,4 @@ Written down because a mod page that lists only what works is not much use.
 
 ## Licence
 
-**LGPL-3.0-only.** The movement layer is derived from [Baritone](https://github.com/cabaletta/baritone)
-(LGPL-3.0) by deliberate study and reimplementation, and this mod is licensed to match.
+**LGPL-3.0-only.** Full text in `LICENSE.txt`.

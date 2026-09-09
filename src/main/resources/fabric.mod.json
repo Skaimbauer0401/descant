@@ -3,7 +3,7 @@
   "id": "descant",
   "version": "${version}",
   "name": "Descant",
-  "description": "A client-side pathfinding bot you can talk to. Baritone-model navigation — walking, mining, bridging, parkour, ladders — driven either by /descant commands or by a language model through a typed action API.",
+  "description": "A client-side pathfinding bot you can talk to. A* navigation — walking, mining, bridging, parkour, ladders — driven either by /descant commands or by a language model through a typed action API.",
   "authors": [
     "Skaimbauer"
   ],
